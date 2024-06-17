@@ -20,8 +20,8 @@ string(APPEND CMAKE_C_FLAGS_RELEASE_INIT        " -g0 -O3")
 string(APPEND CMAKE_CXX_FLAGS_RELEASE_INIT      " -g0 -O3")
 string(APPEND CMAKE_C_FLAGS_DEBUG_INIT          " -ggdb -Og")
 string(APPEND CMAKE_CXX_FLAGS_DEBUG_INIT        " -ggdb -Og")
-string(APPEND CMAKE_C_FLAGS_OPTIMIZED_INIT      " -march=native -mtune=native -O3 -ffp-contract=fast -flto")
-string(APPEND CMAKE_CXX_FLAGS_OPTIMIZED_INIT    " -march=native -mtune=native -O3 -ffp-contract=fast -flto")
+string(APPEND CMAKE_C_FLAGS_OPTIMIZED_INIT      " -march=native -mtune=native -O3 -flto=auto")
+string(APPEND CMAKE_CXX_FLAGS_OPTIMIZED_INIT    " -march=native -mtune=native -O3 -flto=auto")
 
 # Set up the variables
 foreach(LANG C;CXX)
