@@ -260,6 +260,7 @@ video_cards[] = {
     { &tgui9440_vlb_device                             },
     { &s3_virge_357_agp_device                         },
     { &s3_diamond_stealth_4000_agp_device              },
+    { &s3_trio3d_agp_device                            },
     { &s3_trio3d2x_agp_device                          },
     { &productiva_g100_device, VIDEO_FLAG_TYPE_SPECIAL },
     { &velocity_100_agp_device                         },
