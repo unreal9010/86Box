@@ -74,7 +74,8 @@ static int dither[4][4] = {
 #define ROM_VIRGE_GX                  "roms/video/s3virge/86c375_4.bin"
 #define ROM_VIRGE_GX2                 "roms/video/s3virge/flagpoint.VBI"
 #define ROM_DIAMOND_STEALTH3D_4000    "roms/video/s3virge/86c357.bin"
-#define ROM_TRIO3D2X                  "roms/video/s3virge/TRIO3D2X_8mbsdr.VBI"
+#define ROM_TRIO3D                    "roms/video/s3virge/TRIO3D2X_8mbsdr.VBI"
+#define ROM_TRIO3D2X                  "roms/video/s3virge/86c365trio3dagp.BIN"
 
 enum {
     S3_VIRGE_325,
@@ -86,6 +87,7 @@ enum {
     S3_VIRGE_GX,
     S3_VIRGE_GX2,
     S3_DIAMOND_STEALTH3D_4000,
+    S3_TRIO_3D
     S3_TRIO_3D2X
 };
 
@@ -94,6 +96,7 @@ enum {
     S3_VIRGEVX,
     S3_VIRGEDX,
     S3_VIRGEGX2,
+    S3_TRIO3D,
     S3_TRIO3D2X
 };
 
@@ -1059,7 +1062,7 @@ s3_virge_updatemapping(virge_t *virge)
                 virge->linear_size = 0x200000;
                 break;
             case 3: /*4mb on other than ViRGE/VX, 8mb on ViRGE/VX*/
-                if (virge->chip == S3_VIRGEVX || virge->chip == S3_TRIO3D2X)
+                if (virge->chip == S3_VIRGEVX || virge->chip == S3_TRIO3D2X || virge->chip == S3_TRIO3D)
                     virge->linear_size = 0x800000;
                 else
                     virge->linear_size = 0x400000;
@@ -1077,7 +1080,7 @@ s3_virge_updatemapping(virge_t *virge)
             mem_mapping_set_addr(&svga->mapping, 0xa0000, 0x10000);
             mem_mapping_disable(&virge->linear_mapping);
         } else {
-            if (virge->chip == S3_VIRGEVX || virge->chip == S3_TRIO3D2X)
+            if (virge->chip == S3_VIRGEVX || virge->chip == S3_TRIO3D2X || virge->chip == S3_TRIO3D)
                 virge->linear_base &= 0xfe000000;
             else
                 virge->linear_base &= 0xfc000000;
@@ -4055,7 +4058,7 @@ s3_virge_pci_read(UNUSED(int func), int addr, void *priv)
             ret = 0x00;
             break;
         case 0x13:
-            ret = (virge->chip == S3_VIRGEVX || virge->chip == S3_TRIO3D2X) ? (svga->crtc[0x59] & 0xfe) : (svga->crtc[0x59] & 0xfc);
+            ret = (virge->chip == S3_VIRGEVX || virge->chip == S3_TRIO3D2X || virge->chip == S3_TRIO3D) ? (svga->crtc[0x59] & 0xfe) : (svga->crtc[0x59] & 0xfc);
             break;
 
         case 0x2c:
@@ -4115,6 +4118,9 @@ s3_virge_pci_read(UNUSED(int func), int addr, void *priv)
 
         case 0x84:
             ret = (virge->chip >= S3_TRIO3D2X) ? 0x03 : 0x01;
+            break;
+        case 0x8904:
+            ret = (virge->chip >= S3_TRIO3D) ? 0x03 : 0x01;
             break;
         case 0x87:
             ret = 0x1f;
@@ -4198,7 +4204,7 @@ s3_virge_pci_write(UNUSED(int func), int addr, uint8_t val, void *priv)
             return;
 
         case 0x13:
-            svga->crtc[0x59] = (virge->chip == S3_VIRGEVX || virge->chip == S3_TRIO3D2X) ? (val & 0xfe) : (val & 0xfc);
+            svga->crtc[0x59] = (virge->chip == S3_VIRGEVX || virge->chip == S3_TRIO3D2X || virge->chip == S3_TRIO3D) ? (val & 0xfe) : (val & 0xfc);
             s3_virge_updatemapping(virge);
             return;
 
@@ -4330,6 +4336,9 @@ s3_virge_init(const device_t *info)
             break;
         case S3_DIAMOND_STEALTH3D_4000:
             bios_fn = ROM_DIAMOND_STEALTH3D_4000;
+            break;
+        case S3_TRIO_3D:
+            bios_fn = ROM_TRIO3D;
             break;
         case S3_TRIO_3D2X:
             bios_fn = ROM_TRIO3D2X;
@@ -4943,6 +4952,20 @@ const device_t s3_diamond_stealth_4000_agp_device = {
     .speed_changed = s3_virge_speed_changed,
     .force_redraw  = s3_virge_force_redraw,
     .config        = s3_virge_357_config
+};
+
+const device_t s3_trio3d_agp_device = {
+    .name          = "S3 Trio3D (365) AGP",
+    .internal_name = "trio3d_agp",
+    .flags         = DEVICE_AGP,
+    .local         = S3_TRIO_3D,
+    .init          = s3_virge_init,
+    .close         = s3_virge_close,
+    .reset         = s3_virge_reset,
+    { .available = s3_trio3d_available },
+    .speed_changed = s3_virge_speed_changed,
+    .force_redraw  = s3_virge_force_redraw,
+    .config        = s3_trio3d_config
 };
 
 const device_t s3_trio3d2x_pci_device = {
