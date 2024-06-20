@@ -87,7 +87,7 @@ enum {
     S3_VIRGE_GX,
     S3_VIRGE_GX2,
     S3_DIAMOND_STEALTH3D_4000,
-    S3_TRIO_3D
+    S3_TRIO_3D,
     S3_TRIO_3D2X
 };
 
@@ -4340,7 +4340,7 @@ s3_virge_init(const device_t *info)
         case S3_TRIO_3D:
             bios_fn = ROM_TRIO3D;
             break;
-        case S3_TRIO_3D2X:
+        case S3_TRIO3D2X:
             bios_fn = ROM_TRIO3D2X;
             break;
         default:
