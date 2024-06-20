@@ -4637,6 +4637,12 @@ s3_virge_357_diamond_available(void)
 }
 
 static int
+s3_trio3d_available(void)
+{
+    return rom_present(ROM_TRIO3D);
+}
+
+static int
 s3_trio3d2x_available(void)
 {
     return rom_present(ROM_TRIO3D2X);
