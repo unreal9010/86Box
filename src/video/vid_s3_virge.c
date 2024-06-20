@@ -74,8 +74,8 @@ static int dither[4][4] = {
 #define ROM_VIRGE_GX                  "roms/video/s3virge/86c375_4.bin"
 #define ROM_VIRGE_GX2                 "roms/video/s3virge/flagpoint.VBI"
 #define ROM_DIAMOND_STEALTH3D_4000    "roms/video/s3virge/86c357.bin"
-#define ROM_TRIO3D                    "roms/video/s3virge/TRIO3D2X_8mbsdr.VBI"
-#define ROM_TRIO3D2X                  "roms/video/s3virge/86c365trio3dagp.BIN"
+#define ROM_TRIO3D                    "roms/video/s3virge/86c365trio3dagp.BIN"
+#define ROM_TRIO3D2X                  "roms/video/s3virge/TRIO3D2X_8mbsdr.VBI"
 
 enum {
     S3_VIRGE_325,
