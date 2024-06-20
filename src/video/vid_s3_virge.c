@@ -4444,7 +4444,20 @@ s3_virge_init(const device_t *info)
             video_inform(VIDEO_FLAG_TYPE_SPECIAL, virge->is_agp ? &timing_virge_agp : &timing_virge_dx_pci);
             break;
 
-        case S3_TRIO_3D2X:
+        case S3_TRIO_3D:
+            virge->fifo_slots_num = 16;
+            virge->svga.decode_mask  = (8 << 20) - 1;
+            virge->virge_id_high     = 0x8904;
+            virge->virge_id_low      = 0x13;
+            virge->virge_rev         = 0x01;
+            virge->svga.crtc[0x6c]   = 1;
+            virge->svga.crtc[0x59]   = 0x70;
+            virge->svga.vblank_start = s3_virge_vblank_start;
+            virge->chip              = S3_TRIO3D;
+            video_inform(VIDEO_FLAG_TYPE_SPECIAL, virge->is_agp ? &timing_virge_agp);
+            break;
+
+         case S3_TRIO_3D2X:
             virge->fifo_slots_num = 16;
             virge->svga.decode_mask  = (8 << 20) - 1;
             virge->virge_id_high     = 0x8a;
