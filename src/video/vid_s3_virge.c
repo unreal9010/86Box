@@ -4766,6 +4766,46 @@ static const device_config_t s3_virge_357_config[] = {
   // clang-format on
 };
 
+static const device_config_t s3_trio3d_config[] = {
+  // clang-format off
+    {
+        .name = "memory",
+        .description = "Memory size",
+        .type = CONFIG_SELECTION,
+        .default_int = 4,
+        .selection = {
+            {
+                .description = "4 MB",
+                .value = 4
+            },
+            {
+                .description = "8 MB",
+                .value = 8
+            },
+            {
+                .description = ""
+            }
+        }
+    },
+    {
+        .name = "bilinear",
+        .description = "Bilinear filtering",
+        .type = CONFIG_BINARY,
+        .default_int = 1
+    },
+    {
+        .name = "dithering",
+        .description = "Dithering",
+        .type = CONFIG_BINARY,
+        .default_int = 1
+    },
+    {
+        .type = CONFIG_END
+    }
+  // clang-format on
+};
+
+
 static const device_config_t s3_trio3d2x_config[] = {
   // clang-format off
     {
