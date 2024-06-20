@@ -536,6 +536,7 @@ extern const device_t s3_virge_357_pci_device;
 extern const device_t s3_virge_357_agp_device;
 extern const device_t s3_diamond_stealth_4000_pci_device;
 extern const device_t s3_diamond_stealth_4000_agp_device;
+extern const device_t s3_trio3d_agp_device;
 extern const device_t s3_trio3d2x_pci_device;
 extern const device_t s3_trio3d2x_agp_device;
 
