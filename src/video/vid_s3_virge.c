@@ -4337,7 +4337,7 @@ s3_virge_init(const device_t *info)
         case S3_DIAMOND_STEALTH3D_4000:
             bios_fn = ROM_DIAMOND_STEALTH3D_4000;
             break;
-        case S3_TRIO_3D:
+        case S3_TRIO3D:
             bios_fn = ROM_TRIO3D;
             break;
         case S3_TRIO3D2X:
