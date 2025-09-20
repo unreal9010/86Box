@@ -461,13 +461,13 @@ OpenGLRenderer::create_fbo(struct shader_fbo *fbo)
 
 
 void
-OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo)
-{
+void OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo) {
     fbo->texture.internal_format = GL_RGBA8;
     fbo->texture.format          = GL_RGBA;
-    fbo->texture.min_filter = fbo->texture.mag_filter = shader->filter_linear ? GL_LINEAR : GL_NEAREST;
-    fbo->texture.width                                = 2048;
-    fbo->texture.height                               = 2048;
+    fbo->texture.min_filter = fbo->texture.mag_filter =
+        shader->filter_linear ? GL_LINEAR : GL_NEAREST;
+    fbo->texture.width  = 2048;
+    fbo->texture.height = 2048;
 
     fbo->texture.type = GL_UNSIGNED_BYTE;
 
@@ -488,6 +488,14 @@ OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo)
         fbo->texture.internal_format = GL_RGBA32F;
         fbo->texture.type            = GL_FLOAT;
     }
+
+    if (fbo->texture.mipmap)
+        fbo->texture.min_filter =
+            shader->filter_linear ? GL_LINEAR_MIPMAP_LINEAR
+                                  : GL_NEAREST_MIPMAP_NEAREST;
+
+    create_fbo(fbo);
+}
 
     if (fbo->texture.mipmap)
         fbo->texture.min_filter = shader->filter_linear ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST;
