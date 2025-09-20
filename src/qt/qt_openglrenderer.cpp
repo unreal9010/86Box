@@ -59,6 +59,8 @@ extern "C" {
 #include <86box/config.h>
 #include <86box/qt-glslp-parser.h>
 
+#include  <QOpenGLFunctions>  
+
 char gl3_shader_file[MAX_USER_SHADERS][512];
 extern bool cpu_thread_running;
 }
@@ -1408,18 +1410,15 @@ OpenGLRenderer::render()
 
     GLfloat orig_output_size[] = { (GLfloat)window_rect.w, (GLfloat)window_rect.h };
     GLfloat shader_input_size[] = { orig_output_size[0], orig_output_size[1] };
-    //---------------------------------------------------------
-// Minimum-size upscaler for small guest resolutions
-// Ensures shaders always see at least 240×160 *per axis*
-// (integer-scaled) by rendering to a larger off-screen FBO.
-//---------------------------------------------------------
+    //---------------------------------------------------------  
+
 const int MIN_W = 240;
 const int MIN_H = 160;
 
 int srcW = static_cast<int>(shader_input_size[0]);
 int srcH = static_cast<int>(shader_input_size[1]);
 
-// work out integer scale so that result ≥ MIN_W × MIN_H
+// work out integer scale so result ≥ MIN_W × MIN_H
 int scale = std::max(
     1,
     std::max(
@@ -1440,35 +1439,40 @@ if (scale > 1) {
     int upH = srcH * scale;
 
     if (upW != cachedW || upH != cachedH) {
-        if (upTex) glDeleteTextures(1, &upTex);
-        if (upFBO) glDeleteFramebuffers(1, &upFBO);
-        glGenTextures(1, &upTex);
-        glBindTexture(GL_TEXTURE_2D, upTex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
-                     upW, upH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glGenFramebuffers(1, &upFBO);
-        glBindFramebuffer(GL_FRAMEBUFFER, upFBO);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                               GL_TEXTURE_2D, upTex, 0);
+        if (upTex) glw->glDeleteTextures(1, &upTex);
+        if (upFBO) glw->glDeleteFramebuffers(1, &upFBO);
+
+        glw->glGenTextures(1, &upTex);
+        glw->glBindTexture(GL_TEXTURE_2D, upTex);
+        glw->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
+                          upW, upH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glw->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glw->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glw->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glw->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glw->glGenFramebuffers(1, &upFBO);
+        glw->glBindFramebuffer(GL_FRAMEBUFFER, upFBO);
+        glw->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                    GL_TEXTURE_2D, upTex, 0);
         cachedW = upW; cachedH = upH;
     }
 
     // render the current scene texture into the bigger FBO
-    glBindFramebuffer(GL_FRAMEBUFFER, upFBO);
-    glViewport(0, 0, upW, upH);
-    glDisable(GL_BLEND);
-    glBindTexture(GL_TEXTURE_2D, active_shader->scene.fbo.texture); // ← uses 86Box’s existing scene texture
-    draw_textured_quad(); // 86Box helper draws a full-screen quad with nearest filtering
+    glw->glBindFramebuffer(GL_FRAMEBUFFER, upFBO);
+    glw->glViewport(0, 0, upW, upH);
+    glw->glDisable(GL_BLEND);
+
+    // NOTE: use the actual GLuint for the scene texture
+    glw->glBindTexture(GL_TEXTURE_2D, active_shader->scene.fbo.texture.id);
+
+    draw_textured_quad();   // must already use glw-> calls internally
 
     // hand the larger texture to the shader pipeline
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glw->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     shader_input_size[0] = static_cast<GLfloat>(upW);
     shader_input_size[1] = static_cast<GLfloat>(upH);
-    active_shader->scene.fbo.texture = upTex;
+    active_shader->scene.fbo.texture.id = upTex;
 }
 
     
