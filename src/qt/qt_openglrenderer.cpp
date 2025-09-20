@@ -468,11 +468,39 @@ OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo)
     fbo->texture.min_filter = fbo->texture.mag_filter = shader->filter_linear ? GL_LINEAR : GL_NEAREST;
     fbo->texture.width                                = 2048;
     fbo->texture.height                               = 2048;
-    /* --- Restore original scene texture if we temporarily swapped it --- */
-        ogl3_log("Restore: restoring original scene texture id 0x%X", saved_scene_tex);
-        active_shader->scene.fbo.texture.id = saved_scene_tex;
-        saved_scene_tex = 0;
+
+    fbo->texture.type = GL_UNSIGNED_BYTE;
+
+    if (!strcmp(shader->wrap_mode, "repeat"))
+        fbo->texture.wrap_mode = GL_REPEAT;
+    else if (!strcmp(shader->wrap_mode, "mirrored_repeat"))
+        fbo->texture.wrap_mode = GL_MIRRORED_REPEAT;
+    else if (!strcmp(shader->wrap_mode, "clamp_to_edge"))
+        fbo->texture.wrap_mode = GL_CLAMP_TO_EDGE;
+    else
+        fbo->texture.wrap_mode = GL_CLAMP_TO_BORDER;
+
+    fbo->srgb = 0;
+    if (shader->srgb_framebuffer) {
+        fbo->texture.internal_format = GL_SRGB8_ALPHA8;
+        fbo->srgb                    = 1;
+    } else if (shader->float_framebuffer) {
+        fbo->texture.internal_format = GL_RGBA32F;
+        fbo->texture.type            = GL_FLOAT;
     }
+
+    if (fbo->texture.mipmap)
+        fbo->texture.min_filter = shader->filter_linear ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST;
+
+    create_fbo(fbo);
+}
+{
+    fbo->texture.internal_format = GL_RGBA8;
+    fbo->texture.format          = GL_RGBA;
+    fbo->texture.min_filter = fbo->texture.mag_filter = shader->filter_linear ? GL_LINEAR : GL_NEAREST;
+    fbo->texture.width                                = 2048;
+    fbo->texture.height                               = 2048;
+    /* --- Restore original scene texture if we temporarily swapped it --- */
     fbo->texture.type                                 = GL_UNSIGNED_BYTE;
     if (!strcmp(shader->wrap_mode, "repeat"))
         fbo->texture.wrap_mode = GL_REPEAT;
