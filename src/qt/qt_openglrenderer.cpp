@@ -469,6 +469,13 @@ OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo)
     fbo->texture.min_filter = fbo->texture.mag_filter = shader->filter_linear ? GL_LINEAR : GL_NEAREST;
     fbo->texture.width                                = 2048;
     fbo->texture.height                               = 2048;
+    /* --- Restore original scene texture if we temporarily swapped it --- */
+    if (scene_tex_swapped) {
+        ogl3_log("Restore: restoring original scene texture id 0x%X", saved_scene_tex);
+        active_shader->scene.fbo.texture.id = saved_scene_tex;
+        saved_scene_tex = 0;
+        scene_tex_swapped = false;
+    }
     fbo->texture.type                                 = GL_UNSIGNED_BYTE;
     if (!strcmp(shader->wrap_mode, "repeat"))
         fbo->texture.wrap_mode = GL_REPEAT;
@@ -1837,23 +1844,4 @@ OpenGLRenderer::render()
 
     frameCounter++;
     context->swapBuffers(this);
-}
-
-
-int OpenGLRenderer::create_default_shader_tex(struct shader_pass *pass) {
-    // TODO: implement real logic
-    return 0;
-}
-
-int OpenGLRenderer::create_default_shader_color(struct shader_pass *pass) {
-    // TODO: implement real logic
-    return 0;
-}
-
-void OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo) {
-    // TODO: implement real logic
-}
-
-void OpenGLRenderer::recreate_fbo(struct shader_fbo *fbo, int width, int height) {
-    // TODO: implement real logic
 }
