@@ -1,9 +1,4 @@
-#ifndef QT_OPENGLRENDERER_HPP
-#define QT_OPENGLRENDERER_HPP
-
-
 /*
- */
  * 86Box    A hypervisor and IBM PC system emulator that specializes in
  *          running old operating systems and software designed for IBM
  *          PC systems and compatibles from 1981 through fairly recent
@@ -67,7 +62,6 @@ class OpenGLRenderer : public QWindow, public RendererCommon {
 
 public:
     QOpenGLContext *context;
-    void draw_textured_quad(GLuint vao);
 
     OpenGLRenderer(QWidget *parent = nullptr);
     ~OpenGLRenderer();
@@ -147,6 +141,7 @@ private:
     void read_shader_config();
 
     void render_pass(struct render_data *data);
+    void draw_textured_quad(GLuint vao);  // <-- Added to match .cpp
 
 private slots:
     void render();
@@ -161,4 +156,3 @@ public:
 };
 
 #endif
-#endif // QT_OPENGLRENDERER_HPP
