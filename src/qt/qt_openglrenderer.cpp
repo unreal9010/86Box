@@ -6,7 +6,7 @@
  *
  *          This file is part of the 86Box distribution.
  *
- *          OpenGL renderer for Qt, mostly ported over from PCem. Now with some improvements.
+ *          OpenGL renderer for Qt, mostly ported over from PCem.
  *
  *
  *
