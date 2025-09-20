@@ -459,7 +459,6 @@ OpenGLRenderer::create_fbo(struct shader_fbo *fbo)
     glw.glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-/*}
 
 void
 OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo)
@@ -470,11 +469,9 @@ OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo)
     fbo->texture.width                                = 2048;
     fbo->texture.height                               = 2048;
     /* --- Restore original scene texture if we temporarily swapped it --- */
-    if (scene_tex_swapped) {
         ogl3_log("Restore: restoring original scene texture id 0x%X", saved_scene_tex);
         active_shader->scene.fbo.texture.id = saved_scene_tex;
         saved_scene_tex = 0;
-        scene_tex_swapped = false;
     }
     fbo->texture.type                                 = GL_UNSIGNED_BYTE;
     if (!strcmp(shader->wrap_mode, "repeat"))
@@ -1840,8 +1837,29 @@ OpenGLRenderer::render()
         free(rgb);
     }
 
+        /* --- Restore original scene texture if we temporarily swapped it --- */
+        if (scene_tex_swapped) {
+            ogl3_log("Restore: restoring original scene texture id 0x%X", saved_scene_tex);
+            active_shader->scene.fbo.texture.id = saved_scene_tex;
+            saved_scene_tex = 0;
+            scene_tex_swapped = false;
+        }
     glw.glDisable(GL_FRAMEBUFFER_SRGB);
 
     frameCounter++;
     context->swapBuffers(this);
 }
+
+
+void OpenGLRenderer::applyOptions() {
+    // TODO: Implement renderer-specific options application
+}
+
+void OpenGLRenderer::initializeBuffers() {
+    // TODO: Initialize OpenGL buffers
+}
+
+void OpenGLRenderer::initializeExtensions() {
+    // TODO: Initialize OpenGL extensions
+}
+
