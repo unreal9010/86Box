@@ -459,88 +459,7 @@ OpenGLRenderer::create_fbo(struct shader_fbo *fbo)
     glw.glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-/* -------------------------
-   Upscale small scene -> larger FBO so shaders always see ≥ MIN
-   This runs AFTER the scene has been rendered into active_shader->scene.fbo
-   ------------------------- */
-const int MIN_W = 240;
-const int MIN_H = 160;
-
-// source size = what the scene pass wrote (use the scene pass output_size)
-int srcW = (int) roundf(active_shader->scene.state.output_size[0]);
-int srcH = (int) roundf(active_shader->scene.state.output_size[1]);
-
-// compute integer scale (ceil) that makes result >= MIN_W/MIN_H
-int scale = std::max(1, std::max( (MIN_W + srcW - 1) / srcW, (MIN_H + srcH - 1) / srcH ));
-
-if (scale > 1) {
-    int upW = srcW * scale;
-    int upH = srcH * scale;
-
-    ogl3_log("Upscale pass: guest %dx%d -> %dx%d for shader", srcW, srcH, upW, upH);
-
-    // recreate cached upFBO/upTex if size changed
-    if (upW != cachedUpW || upH != cachedUpH) {
-        if (upTex) glw.glDeleteTextures(1, &upTex);
-        if (upFBO) glw.glDeleteFramebuffers(1, &upFBO);
-
-        // create texture
-        glw.glGenTextures(1, &upTex);
-        glw.glBindTexture(GL_TEXTURE_2D, upTex);
-        glw.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, upW, upH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        glw.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glw.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glw.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glw.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-        // create FBO
-        glw.glGenFramebuffers(1, &upFBO);
-        glw.glBindFramebuffer(GL_FRAMEBUFFER, upFBO);
-        glw.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, upTex, 0);
-
-        // store cached sizes
-        cachedUpW = upW;
-        cachedUpH = upH;
-    }
-
-    // Bind upscaled FBO and draw the scene texture into it using nearest sampling
-    glw.glBindFramebuffer(GL_FRAMEBUFFER, upFBO);
-    glw.glViewport(0, 0, upW, upH);
-    glw.glDisable(GL_BLEND);
-
-    // update texcoords to full 0..1 for the scene VBO
-    GLfloat tex_coords_full[8] = { 0.0f, 0.0f,  0.0f, 1.0f,  1.0f, 0.0f,  1.0f, 1.0f };
-    glw.glBindBuffer(GL_ARRAY_BUFFER, active_shader->scene.vbo.tex_coord);
-    glw.glBufferSubData(GL_ARRAY_BUFFER, 0, 8 * sizeof(GLfloat), tex_coords_full);
-    glw.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-    // bind original scene texture as source
-    GLuint origTex = active_shader->scene.fbo.texture.id;
-    glw.glActiveTexture(GL_TEXTURE0);
-    glw.glBindTexture(GL_TEXTURE_2D, origTex);
-
-    // draw full-screen quad using the scene VAO (same draw used elsewhere)
-    glw.glBindVertexArray(active_shader->scene.vertex_array);
-    glw.glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    glw.glBindVertexArray(0);
-
-    // unbind source texture
-    glw.glBindTexture(GL_TEXTURE_2D, 0);
-
-    // restore default framebuffer
-    glw.glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-    // remember original texture id so we can restore it later, and swap in the upscaled texture
-    if (!scene_tex_swapped) {
-        saved_scene_tex = origTex;
-        scene_tex_swapped = true;
-    }
-    active_shader->scene.fbo.texture.id = upTex;
-
-    // update the shader input size so subsequent shader pass sizing uses the larger size
-    shader_input_size[0] = (GLfloat) upW;
-    shader_input_size[1] = (GLfloat) upH;
-}
+/*}
 
 void
 OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo)
@@ -1441,6 +1360,14 @@ OpenGLRenderer::render_pass(struct render_data *data)
     glw.glUseProgram(0);
 }
 
+void OpenGLRenderer::draw_textured_quad(GLuint vao)
+{
+    // Bind the VAO and draw a full-screen quad (triangle strip)
+    glw.glBindVertexArray(vao);
+    glw.glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glw.glBindVertexArray(0);
+}
+
 bool
 OpenGLRenderer::event(QEvent *event)
 {
@@ -1572,7 +1499,83 @@ OpenGLRenderer::render()
         data.output_size = orig_output_size;
         render_pass(&data);
 
-        glw.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        
+    // Upscale small scene -> larger FBO so shaders always see ≥ MIN
+    {
+        const int MIN_W = 240;
+        const int MIN_H = 160;
+
+        int srcW = (int) roundf(active_shader->scene.state.output_size[0]);
+        int srcH = (int) roundf(active_shader->scene.state.output_size[1]);
+
+        int scale = std::max(1, std::max(
+            (MIN_W + srcW - 1) / srcW,
+            (MIN_H + srcH - 1) / srcH
+        ));
+
+        if (scale > 1) {
+            int upW = srcW * scale;
+            int upH = srcH * scale;
+
+            ogl3_log("Upscale pass: guest %dx%d -> %dx%d for shader",
+                     srcW, srcH, upW, upH);
+
+            if (upW != cachedUpW || upH != cachedUpH) {
+                if (upTex) glw.glDeleteTextures(1, &upTex);
+                if (upFBO) glw.glDeleteFramebuffers(1, &upFBO);
+
+                glw.glGenTextures(1, &upTex);
+                glw.glBindTexture(GL_TEXTURE_2D, upTex);
+                glw.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, upW, upH, 0,
+                                 GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                glw.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glw.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                glw.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glw.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+                glw.glGenFramebuffers(1, &upFBO);
+                glw.glBindFramebuffer(GL_FRAMEBUFFER, upFBO);
+                glw.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                           GL_TEXTURE_2D, upTex, 0);
+
+                cachedUpW = upW;
+                cachedUpH = upH;
+            }
+
+            glw.glBindFramebuffer(GL_FRAMEBUFFER, upFBO);
+            glw.glViewport(0, 0, upW, upH);
+            glw.glDisable(GL_BLEND);
+
+            GLfloat tex_coords_full[8] = {
+                0.0f, 0.0f,  0.0f, 1.0f,
+                1.0f, 0.0f,  1.0f, 1.0f
+            };
+            glw.glBindBuffer(GL_ARRAY_BUFFER, active_shader->scene.vbo.tex_coord);
+            glw.glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(tex_coords_full), tex_coords_full);
+            glw.glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+            GLuint origTex = active_shader->scene.fbo.texture.id;
+            glw.glActiveTexture(GL_TEXTURE0);
+            glw.glBindTexture(GL_TEXTURE_2D, origTex);
+
+            glw.glBindVertexArray(active_shader->scene.vertex_array);
+            glw.glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            glw.glBindVertexArray(0);
+
+            glw.glBindTexture(GL_TEXTURE_2D, 0);
+            glw.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+            if (!scene_tex_swapped) {
+                saved_scene_tex = origTex;
+                scene_tex_swapped = true;
+            }
+            active_shader->scene.fbo.texture.id = upTex;
+
+            shader_input_size[0] = (GLfloat) upW;
+            shader_input_size[1] = (GLfloat) upH;
+        }
+    }
+
     }
 
     struct shader_pass *orig  = &active_shader->scene;
