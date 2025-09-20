@@ -1838,3 +1838,22 @@ OpenGLRenderer::render()
     frameCounter++;
     context->swapBuffers(this);
 }
+
+
+int OpenGLRenderer::create_default_shader_tex(struct shader_pass *pass) {
+    // TODO: implement real logic
+    return 0;
+}
+
+int OpenGLRenderer::create_default_shader_color(struct shader_pass *pass) {
+    // TODO: implement real logic
+    return 0;
+}
+
+void OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo) {
+    // TODO: implement real logic
+}
+
+void OpenGLRenderer::recreate_fbo(struct shader_fbo *fbo, int width, int height) {
+    // TODO: implement real logic
+}
