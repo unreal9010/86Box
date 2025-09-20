@@ -141,7 +141,11 @@ private:
     void read_shader_config();
 
     void render_pass(struct render_data *data);
-    void draw_textured_quad(GLuint vao);  // <-- Added to match .cpp
+    void draw_textured_quad(GLuint vao);  // Added declaration
+
+    // Added members for restore snippet
+    bool scene_tex_swapped = false;
+    GLuint saved_scene_tex = 0;
 
 private slots:
     void render();
