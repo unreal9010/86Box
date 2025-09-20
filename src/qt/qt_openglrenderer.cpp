@@ -461,6 +461,7 @@ OpenGLRenderer::create_fbo(struct shader_fbo *fbo)
 
 
 void
+
 void OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo) {
     fbo->texture.internal_format = GL_RGBA8;
     fbo->texture.format          = GL_RGBA;
@@ -496,6 +497,7 @@ void OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo) {
 
     create_fbo(fbo);
 }
+
 
     if (fbo->texture.mipmap)
         fbo->texture.min_filter = shader->filter_linear ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST;
@@ -533,17 +535,17 @@ void OpenGLRenderer::setup_fbo(struct shader *shader, struct shader_fbo *fbo) {
     create_fbo(fbo);
 }
 
-void
-OpenGLRenderer::recreate_fbo(struct shader_fbo *fbo, int width, int height)
-{
+
+void OpenGLRenderer::recreate_fbo(struct shader_fbo *fbo, int width, int height) {
     if (width != fbo->texture.width || height != fbo->texture.height) {
-        glw.glDeleteFramebuffers(1, (GLuint *) &fbo->id);
-        glw.glDeleteTextures(1, (GLuint *) &fbo->texture.id);
+        glw.glDeleteFramebuffers(1, (GLuint *)&fbo->id);
+        glw.glDeleteTextures(1, (GLuint *)&fbo->texture.id);
         fbo->texture.width  = width;
         fbo->texture.height = height;
         create_fbo(fbo);
     }
 }
+
 
 int
 OpenGLRenderer::create_default_shader_tex(struct shader_pass *pass)
