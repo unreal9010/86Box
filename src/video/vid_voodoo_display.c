@@ -479,29 +479,29 @@ voodoo_filterline_v2(voodoo_t *voodoo, uint8_t *fil, int column, uint16_t *src, 
 
     // unroll for edge cases
 
-    fil3[(column - 3) * 3]     = voodoo->thefilterb[(src[column - 3] & 31) << 3][(src[column] & 31) << 3];
-    fil3[(column - 3) * 3 + 1] = voodoo->thefilterg[((src[column - 3] >> 5) & 63) << 2][((src[column] >> 5) & 63) << 2];
-    fil3[(column - 3) * 3 + 2] = voodoo->thefilter[((src[column - 3] >> 11) & 31) << 3][((src[column] >> 11) & 31) << 3];
+    fil3[(column - 3) * 3]     = voodoo->thefilterb[(src[column - 3] & 31) << 3][(src[column - 1] & 31) << 3];
+    fil3[(column - 3) * 3 + 1] = voodoo->thefilterg[((src[column - 3] >> 5) & 63) << 2][((src[column - 1] >> 5) & 63) << 2];
+    fil3[(column - 3) * 3 + 2] = voodoo->thefilter[((src[column - 3] >> 11) & 31) << 3][((src[column - 1] >> 11) & 31) << 3];
 
-    fil3[(column - 2) * 3]     = voodoo->thefilterb[(src[column - 2] & 31) << 3][(src[column] & 31) << 3];
-    fil3[(column - 2) * 3 + 1] = voodoo->thefilterg[((src[column - 2] >> 5) & 63) << 2][((src[column] >> 5) & 63) << 2];
-    fil3[(column - 2) * 3 + 2] = voodoo->thefilter[((src[column - 2] >> 11) & 31) << 3][((src[column] >> 11) & 31) << 3];
+    fil3[(column - 2) * 3]     = voodoo->thefilterb[(src[column - 2] & 31) << 3][(src[column - 1] & 31) << 3];
+    fil3[(column - 2) * 3 + 1] = voodoo->thefilterg[((src[column - 2] >> 5) & 63) << 2][((src[column - 1] >> 5) & 63) << 2];
+    fil3[(column - 2) * 3 + 2] = voodoo->thefilter[((src[column - 2] >> 11) & 31) << 3][((src[column - 1] >> 11) & 31) << 3];
 
-    fil3[(column - 1) * 3]     = voodoo->thefilterb[(src[column - 1] & 31) << 3][(src[column] & 31) << 3];
-    fil3[(column - 1) * 3 + 1] = voodoo->thefilterg[((src[column - 1] >> 5) & 63) << 2][((src[column] >> 5) & 63) << 2];
-    fil3[(column - 1) * 3 + 2] = voodoo->thefilter[((src[column - 1] >> 11) & 31) << 3][((src[column] >> 11) & 31) << 3];
+    fil3[(column - 1) * 3]     = voodoo->thefilterb[(src[column - 1] & 31) << 3][(src[column - 1] & 31) << 3];
+    fil3[(column - 1) * 3 + 1] = voodoo->thefilterg[((src[column - 1] >> 5) & 63) << 2][((src[column - 1] >> 5) & 63) << 2];
+    fil3[(column - 1) * 3 + 2] = voodoo->thefilter[((src[column - 1] >> 11) & 31) << 3][((src[column - 1] >> 11) & 31) << 3];
 
-    fil[(column - 2) * 3]     = voodoo->thefilterb[fil3[(column - 2) * 3]][(src[column] & 31) << 3];
-    fil[(column - 2) * 3 + 1] = voodoo->thefilterg[fil3[(column - 2) * 3 + 1]][((src[column] >> 5) & 63) << 2];
-    fil[(column - 2) * 3 + 2] = voodoo->thefilter[fil3[(column - 2) * 3 + 2]][((src[column] >> 11) & 31) << 3];
+    fil[(column - 2) * 3]     = voodoo->thefilterb[fil3[(column - 2) * 3]][(src[column - 1] & 31) << 3];
+    fil[(column - 2) * 3 + 1] = voodoo->thefilterg[fil3[(column - 2) * 3 + 1]][((src[column - 1] >> 5) & 63) << 2];
+    fil[(column - 2) * 3 + 2] = voodoo->thefilter[fil3[(column - 2) * 3 + 2]][((src[column - 1] >> 11) & 31) << 3];
 
-    fil[(column - 1) * 3]     = voodoo->thefilterb[fil3[(column - 1) * 3]][(src[column] & 31) << 3];
-    fil[(column - 1) * 3 + 1] = voodoo->thefilterg[fil3[(column - 1) * 3 + 1]][((src[column] >> 5) & 63) << 2];
-    fil[(column - 1) * 3 + 2] = voodoo->thefilter[fil3[(column - 1) * 3 + 2]][((src[column] >> 11) & 31) << 3];
+    fil[(column - 1) * 3]     = voodoo->thefilterb[fil3[(column - 1) * 3]][(src[column - 1] & 31) << 3];
+    fil[(column - 1) * 3 + 1] = voodoo->thefilterg[fil3[(column - 1) * 3 + 1]][((src[column - 1] >> 5) & 63) << 2];
+    fil[(column - 1) * 3 + 2] = voodoo->thefilter[fil3[(column - 1) * 3 + 2]][((src[column - 1] >> 11) & 31) << 3];
 
-    fil3[(column - 1) * 3]     = voodoo->thefilterb[fil[(column - 1) * 3]][(src[column] & 31) << 3];
-    fil3[(column - 1) * 3 + 1] = voodoo->thefilterg[fil[(column - 1) * 3 + 1]][((src[column] >> 5) & 63) << 2];
-    fil3[(column - 1) * 3 + 2] = voodoo->thefilter[fil[(column - 1) * 3 + 2]][((src[column] >> 11) & 31) << 3];
+    fil3[(column - 1) * 3]     = voodoo->thefilterb[fil[(column - 1) * 3]][(src[column - 1] & 31) << 3];
+    fil3[(column - 1) * 3 + 1] = voodoo->thefilterg[fil[(column - 1) * 3 + 1]][((src[column - 1] >> 5) & 63) << 2];
+    fil3[(column - 1) * 3 + 2] = voodoo->thefilter[fil[(column - 1) * 3 + 2]][((src[column - 1] >> 11) & 31) << 3];
 }
 
 void
@@ -589,14 +589,14 @@ skip_draw:
                 thread_wait_mutex(voodoo->swap_mutex);
                 /*Only swap if both Voodoos are waiting for buffer swap*/
                 if (voodoo->swap_pending && (voodoo->retrace_count > voodoo->swap_interval) && voodoo_1->swap_pending && (voodoo_1->retrace_count > voodoo_1->swap_interval)) {
-                    memset(voodoo->dirty_line, 1, 1024);
+                    memset(voodoo->dirty_line, 1, sizeof(voodoo->dirty_line));
                     voodoo->retrace_count = 0;
                     voodoo->front_offset  = voodoo->swap_offset;
                     if (voodoo->swap_count > 0)
                         voodoo->swap_count--;
                     voodoo->swap_pending = 0;
 
-                    memset(voodoo_1->dirty_line, 1, 1024);
+                    memset(voodoo_1->dirty_line, 1, sizeof(voodoo_1->dirty_line));
                     voodoo_1->retrace_count = 0;
                     voodoo_1->front_offset  = voodoo_1->swap_offset;
                     if (voodoo_1->swap_count > 0)
@@ -621,7 +621,7 @@ skip_draw:
                 voodoo->swap_pending = 0;
                 thread_release_mutex(voodoo->swap_mutex);
 
-                memset(voodoo->dirty_line, 1, 1024);
+                memset(voodoo->dirty_line, 1, sizeof(voodoo->dirty_line));
                 voodoo->retrace_count = 0;
                 thread_set_event(voodoo->wake_fifo_thread);
                 voodoo->frame_count++;
