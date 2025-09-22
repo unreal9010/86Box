@@ -18,6 +18,7 @@
  *          Copyright 2021-2025 RichardG.
  *          Copyright 2025 unreal9010.
  */
+#include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -33,63 +34,49 @@
 #include <86box/timer.h>
 #include <86box/dma.h>
 #include <86box/sound.h>
-
-#include <86box/snd_sb.h>       
-#include <86box/snd_sb_dsp.h>   
-#include <86box/snd_opl.h>       
-#include <86box/midi.h>          
-#include <86box/gameport.h>      
-#include <86box/isapnp.h>        
+#include <86box/snd_sb.h>
+#include <86box/snd_sb_dsp.h>
+#include <86box/snd_opl.h>
+#include <86box/midi.h>
+#include <86box/gameport.h>
+#include <86box/isapnp.h>
 #include <86box/plat_fallthrough.h>
 #include <86box/plat_unused.h>
 
-/* Datasheet-consistent constants */
+/* Datasheet-driven constants */
 #define CMI_IOREGS      0x100
-#define CMI_FIFO_SZ     16    /* datasheet: 16-byte hardware FIFO */
+#define CMI_FIFO_SZ     16
 #define CMI_DMA_CHANS   2
-#define HRTF_MAX_DELAY_SAMPLES  64   /* ~1.45ms @ 44100Hz -> comfortable ITD emulation */
-#define HRTF_DEL_BUF_LEN        (SOUNDBUFLEN + HRTF_MAX_DELAY_SAMPLES + 16)
 
-#ifndef M_PI
-# define M_PI 3.14159265358979323846
-#endif
+/* Forward declarations (device entry at bottom) */
+static void *cmi8330_init(const device_t *info);
+static void  cmi8330_close(void *priv);
+static void  cmi8330_reset(void *priv);
 
-/* Forward declarations for SB DMA wrappers */
-static uint8_t  cmi8330_sb_dma_readb(void *priv);
-static void     cmi8330_sb_dma_writeb(void *priv, uint8_t v);
-static uint16_t cmi8330_sb_dma_readw(void *priv);
-static void     cmi8330_sb_dma_writew(void *priv, uint16_t v);
-
-/* HRTF helper structures */
+/* Minimal HRTF state (lightweight perceptual stub) */
 typedef struct hrtf_state {
-    int enabled;                /* enabled by register bit */
-    int azimuth;                /* coarse azimuth 0..359 (degrees) from register */
-    int elevation;              /* coarse elevation -90..90 mapped from reg */
-    float distance;             /* distance in meters */
-    float gain;                 /* global gain */
-    /* simple ITD delay buffer per ear */
-    int delay_left;             /* integer samples left */
-    int delay_right;            /* integer samples right */
+    int enabled;
+    int azimuth;      /* 0..359 degrees */
+    int elevation;    /* -90..90 */
+    float distance;   /* in meters */
+    float gain;
+    int delay_left;   /* integer samples */
+    int delay_right;
     int del_buf_pos;
-    int32_t del_buf_len;
-    int16_t del_buf[HRTF_DEL_BUF_LEN * 2]; /* stereo circular buffer for delayed samples */
-    /* simple per-ear IIR lowpass (one pole) coef/state */
-    float lp_a;                 /* feedback */
-    float lp_b;                 /* feed */
-    float lp_state_l;
-    float lp_state_r;
-    /* small reverb parameters (very simple comb) */
+    int del_buf_len;
+    int16_t del_buf[1024]; /* small circular buffer */
+    float lp_a, lp_b;
+    float lp_state_l, lp_state_r;
     int reverb_enabled;
     float reverb_level;
+    int16_t reverb_buf[1024];
     int reverb_pos;
-    int reverb_len;
-    int16_t reverb_buf[SOUNDBUFLEN];
 } hrtf_state_t;
 
-/* DMA channel structure */
+/* DMA channel */
 typedef struct cmi8330_dma {
     int id;
-    uint8_t regbase;            /* base offset (0x80 + id*8) */
+    uint8_t regbase;            /* register base (0x80 + id*8) */
     uint8_t fifo[CMI_FIFO_SZ];
     uint32_t fifo_pos;
     uint32_t fifo_end;
@@ -98,16 +85,16 @@ typedef struct cmi8330_dma {
     int32_t frame_count_fragment;
     uint8_t restart;
     uint8_t playback_enabled;
-    double dma_latch;           /* microseconds per DMA tick */
+    double dma_latch;
     uint64_t timer_latch;
     pc_timer_t dma_timer;
     pc_timer_t poll_timer;
     int pos;
     int16_t buffer[SOUNDBUFLEN * 2];
-    struct cmi8330 *dev;
+    struct cmi8330 *dev;        /* back pointer */
 } cmi8330_dma_t;
 
-/* Main device structure */
+/* Main device state */
 typedef struct cmi8330 {
     uint16_t io_base;
     uint16_t mpu_base;
@@ -121,141 +108,42 @@ typedef struct cmi8330 {
 
     cmi8330_dma_t dma[CMI_DMA_CHANS];
 
-    /* HRTF engine state */
     hrtf_state_t hrtf;
-
-    /* SPDIF stub state */
     int spdif_enabled;
-    int spdif_out_route;   /* where to route SPDIF (0=none, 1=master, etc.) */
-
+    int spdif_route;
 } cmi8330_t;
 
-/* ------ Utility helpers ------ */
+/* ---------- Small helpers ---------- */
 
-/* clamp int */
 static inline int clamp_i(int v, int lo, int hi) { if (v < lo) return lo; if (v > hi) return hi; return v; }
 
-/* simple dB-to-linear */
-static inline float db_to_linear(int db) {
-    return powf(10.0f, (float)db / 20.0f);
-}
-
-/* ------ IRQ helpers ------ */
-static void cmi8330_update_irqs(cmi8330_t *dev)
-{
-    if (dev->io_regs[0x10] || dev->io_regs[0x11]) {
-        picint(1 << dev->irq);
-    } else {
-        picintc(1 << dev->irq);
-    }
-}
-
-/* ------ HRTF engine helpers ------ */
-
-/* Configure HRTF lowpass coefficients for simple head-shadowing simulation.
-   We compute a single-pole lowpass with cutoff derived from angle/distance. */
+/* Configure a one-pole lowpass for HRTF (simple head-shadowing proxy) */
 static void hrtf_configure_lp(hrtf_state_t *h, float cutoff, int samplerate)
 {
-    /* bilinear transform one-pole; simple RC: alpha = exp(-2*pi*fc/fs) */
     float alpha = expf(-2.0f * M_PI * cutoff / (float)samplerate);
     h->lp_a = alpha;
     h->lp_b = 1.0f - alpha;
 }
 
-/* Compute ITD and ILD from azimuth/distance (very coarse model) */
-static void hrtf_compute_delays_and_gains(hrtf_state_t *h, int azimuth_deg, float distance, int samplerate)
+/* Compute coarse ITD and set simple gain/delay parameters */
+static void hrtf_compute_basic(hrtf_state_t *h, int azimuth_deg, float distance, int samplerate)
 {
-    /* Coarse ITD: maximum ~680us between ears (human) -> ~30 samples at 44100Hz.
-       Scale by sin(azimuth), vary with head geometry; use simple model. */
-    float max_itd_s = 0.00068f; /* 680 us */
+    float max_itd_s = 0.00068f; /* ~680us */
     float rad = azimuth_deg * (M_PI / 180.0f);
     float itd = max_itd_s * sinf(rad);
     int delay_samples = (int)roundf(itd * samplerate);
-    /* left/right depending on sign of azimuth (positive to right) */
     if (delay_samples >= 0) {
-        h->delay_left  = 0;
-        h->delay_right = clamp_i(delay_samples, 0, HRTF_MAX_DELAY_SAMPLES);
+        h->delay_left = 0;
+        h->delay_right = clamp_i(delay_samples, 0, 64);
     } else {
-        h->delay_left  = clamp_i(-delay_samples, 0, HRTF_MAX_DELAY_SAMPLES);
+        h->delay_left = clamp_i(-delay_samples, 0, 64);
         h->delay_right = 0;
     }
-
-    /* ILD: simple frequency-independent attenuation on far ear.
-       Use cosine-based attenuation and distance-based rolloff. */
-    float base_atten = 1.0f / (1.0f + 0.1f * (distance - 1.0f)); /* mild distance falloff */
-    float il = base_atten * (0.5f * (1.0f + cosf(rad))); /* left scale */
-    float ir = base_atten * (0.5f * (1.0f + cosf(rad + M_PI))); /* right scale */
-    /* store as lp state scaling factors via gain in HRTF state: we apply at mix time */
-    h->gain = 1.0f; /* kept separate; ILD applied in mixing path */
-    (void)il; (void)ir; /* ILD used inline at mix time */
+    /* coarse distance -> gain */
+    h->gain = 1.0f / (1.0f + 0.1f * (distance - 1.0f));
 }
 
-/* Apply HRTF to interleaved input buffer 'in' (len samples per channel) -> out mixed into buffer */
-static void hrtf_process(hrtf_state_t *h, int32_t *inbuf, int len, int samplerate)
-{
-    if (!h->enabled) return;
-
-    /* For each stereo frame, apply simple pipeline:
-       - push into circular delay buffer
-       - read delayed samples for ear delays
-       - apply per-ear lowpass (lp filter)
-       - apply ILD via angle-dependent attenuation
-       - add reverb if enabled
-    */
-    for (int i = 0; i < len; ++i) {
-        int16_t s_l = (int16_t)clamp_i(inbuf[i*2 + 0], -32768, 32767);
-        int16_t s_r = (int16_t)clamp_i(inbuf[i*2 + 1], -32768, 32767);
-
-        /* mono source assumption for wave playback (mix L+R) */
-        int32_t mono = ((int32_t)s_l + (int32_t)s_r) / 2;
-
-        /* write to circular buffer */
-        int wpos = (h->del_buf_pos * 2) % (h->del_buf_len * 2);
-        h->del_buf[wpos + 0] = (int16_t)mono;
-        h->del_buf[wpos + 1] = (int16_t)mono;
-        h->del_buf_pos = (h->del_buf_pos + 1) % h->del_buf_len;
-
-        /* read delayed positions */
-        int read_pos_l = (h->del_buf_pos - 1 - h->delay_left + h->del_buf_len) % h->del_buf_len;
-        int read_pos_r = (h->del_buf_pos - 1 - h->delay_right + h->del_buf_len) % h->del_buf_len;
-        int rp_l = (read_pos_l * 2) % (h->del_buf_len * 2);
-        int rp_r = (read_pos_r * 2) % (h->del_buf_len * 2);
-        int16_t d_l = h->del_buf[rp_l + 0];
-        int16_t d_r = h->del_buf[rp_r + 1];
-
-        /* simple lowpass per-ear */
-        float out_l = h->lp_b * (float)d_l + h->lp_a * h->lp_state_l;
-        float out_r = h->lp_b * (float)d_r + h->lp_a * h->lp_state_r;
-        h->lp_state_l = out_l;
-        h->lp_state_r = out_r;
-
-        /* distance-based attenuation and ILD: derive left/right scale from azimuth using trigonometric mapping.
-           We derive pseudo ILD factor: left = cos(azimuth/2), right = sin(azimuth/2) mapped to [0..1] */
-        /* For simplicity compute azimuth from h->delay_right/h->delay_left ratio (not stored), so we approximate with 0.5..1 scales */
-        float il_scale = 0.8f; /* placeholder; datasheet wiring controls exact gain */
-        float ir_scale = 0.8f;
-
-        /* apply global gain & scale */
-        int32_t final_l = (int32_t)clamp_i((int32_t)roundf(out_l * h->gain * il_scale), -32768, 32767);
-        int32_t final_r = (int32_t)clamp_i((int32_t)roundf(out_r * h->gain * ir_scale), -32768, 32767);
-
-        /* optional reverb: simple feedback comb */
-        if (h->reverb_enabled) {
-            int rpos = (h->reverb_pos + i) % h->reverb_len;
-            int32_t rv = h->reverb_buf[rpos];
-            int32_t rv_out = (int32_t)((final_l + final_r) / 2 * h->reverb_level);
-            h->reverb_buf[rpos] = (int16_t)clamp_i(rv + rv_out, -32768, 32767);
-            final_l = clamp_i(final_l + (h->reverb_buf[rpos] >> 2), -32768, 32767);
-            final_r = clamp_i(final_r + (h->reverb_buf[rpos] >> 2), -32768, 32767);
-        }
-
-        /* write back into input buffer (in-place transform) */
-        inbuf[i*2 + 0] = final_l;
-        inbuf[i*2 + 1] = final_r;
-    }
-}
-
-/* init HRTF state with defaults */
+/* init HRTF */
 static void hrtf_init(hrtf_state_t *h, int samplerate)
 {
     memset(h, 0, sizeof(*h));
@@ -264,56 +152,57 @@ static void hrtf_init(hrtf_state_t *h, int samplerate)
     h->elevation = 0;
     h->distance = 1.0f;
     h->gain = 1.0f;
-    h->del_buf_len = HRTF_DEL_BUF_LEN;
+    h->del_buf_len = (int)(sizeof(h->del_buf)/sizeof(h->del_buf[0]));
     h->del_buf_pos = 0;
-    h->reverb_enabled = 0;
-    h->reverb_level = 0.15f;
-    h->reverb_len = 512;
-    if (h->reverb_len >= SOUNDBUFLEN) h->reverb_len = SOUNDBUFLEN - 1;
-    h->reverb_pos = 0;
-    /* default lp cutoff moderate */
+    h->reverb_len = 512; /* small */
     hrtf_configure_lp(h, 4000.0f, samplerate);
+    hrtf_compute_basic(h, h->azimuth, h->distance, samplerate);
 }
 
-/* ------ DMA core helpers ------ */
+/* ---------- SB DSP DMA wrappers (must match sb_dsp_dma_attach signatures) ---------- */
 
-/* SB DMA wrappers: allow sb_dsp layer to push/pull bytes/words to/from our FIFO */
-static uint8_t cmi8330_sb_dma_readb(void *priv)
+/* Return DMA_NODATA (-1) if there is no data; otherwise return byte/word value. */
+static int cmi8330_sb_dma_readb(void *priv)
 {
     cmi8330_t *dev = (cmi8330_t *)priv;
-    /* read from channel 0 FIFO if available */
-    cmi8330_dma_t *d = &dev->dma[0];
+    cmi8330_dma_t *d = &dev->dma[0]; /* legacy SB uses channel 0 FIFO */
     if (d->fifo_pos < d->fifo_end) {
-        uint8_t v = d->fifo[d->fifo_pos++ & (CMI_FIFO_SZ - 1)];
-        return v;
+        int v = d->fifo[d->fifo_pos++ & (CMI_FIFO_SZ - 1)];
+        return v & 0xff;
     }
-    return 0xff;
+    return DMA_NODATA;
 }
 
-static void cmi8330_sb_dma_writeb(void *priv, uint8_t v)
+static int cmi8330_sb_dma_readw(void *priv)
+{
+    int lo = cmi8330_sb_dma_readb(priv);
+    if (lo == DMA_NODATA) return DMA_NODATA;
+    int hi = cmi8330_sb_dma_readb(priv);
+    if (hi == DMA_NODATA) return DMA_NODATA;
+    return (lo & 0xff) | ((hi & 0xff) << 8);
+}
+
+/* Write callbacks — return 0 on success, non-zero on error (match other drivers) */
+static int cmi8330_sb_dma_writeb(void *priv, uint8_t val)
 {
     cmi8330_t *dev = (cmi8330_t *)priv;
     cmi8330_dma_t *d = &dev->dma[0];
     if (((int)(d->fifo_end - d->fifo_pos) + 1) <= (int)sizeof(d->fifo)) {
-        d->fifo[d->fifo_end & (CMI_FIFO_SZ - 1)] = v;
+        d->fifo[d->fifo_end & (CMI_FIFO_SZ - 1)] = val;
         d->fifo_end++;
+        return 0;
     }
+    return 1;
 }
 
-static uint16_t cmi8330_sb_dma_readw(void *priv)
+static int cmi8330_sb_dma_writew(void *priv, uint16_t val)
 {
-    uint16_t lo = cmi8330_sb_dma_readb(priv);
-    uint16_t hi = cmi8330_sb_dma_readb(priv);
-    return lo | (hi << 8);
+    if (cmi8330_sb_dma_writeb(priv, val & 0xff)) return 1;
+    if (cmi8330_sb_dma_writeb(priv, (val >> 8) & 0xff)) return 1;
+    return 0;
 }
 
-static void cmi8330_sb_dma_writew(void *priv, uint16_t w)
-{
-    cmi8330_sb_dma_writeb(priv, w & 0xff);
-    cmi8330_sb_dma_writeb(priv, (w >> 8) & 0xff);
-}
-
-/* ------ DMA processing + sample decode (same mapping as PCI driver) ------ */
+/* ---------- DMA processing and polling ---------- */
 
 static void cmi8330_dma_process(void *priv)
 {
@@ -321,9 +210,11 @@ static void cmi8330_dma_process(void *priv)
     cmi8330_t *dev = dma->dev;
     uint8_t dma_bit = (1 << dma->id);
 
+    /* DMA enable register at 0x02 */
     if (!(dev->io_regs[0x02] & dma_bit))
         return;
 
+    /* re-arm timer */
     timer_on_auto(&dma->dma_timer, dma->dma_latch);
 
     if (dma->restart) {
@@ -361,8 +252,9 @@ static void cmi8330_dma_process(void *priv)
     if (--dma->frame_count_fragment <= 0) {
         dma->frame_count_fragment = (dev->io_regs[dma->regbase + 4] | (dev->io_regs[dma->regbase + 5] << 8)) + 1;
         if (dev->io_regs[0x0e] & dma_bit) {
-            dev->io_regs[0x10] |= dma_bit;
-            cmi8330_update_irqs(dev);
+            dev->io_regs[0x10] |= dma_bit; /* fragment interrupt flag region */
+            /* ISR raise */
+            picint(1 << dev->irq);
         }
     }
 
@@ -372,7 +264,7 @@ static void cmi8330_dma_process(void *priv)
     }
 }
 
-/* Poll handler: decode FIFO into sample buffer */
+/* Decode FIFO into sample buffer; runs at sample rate */
 static void cmi8330_poll(void *priv)
 {
     cmi8330_dma_t *dma = (cmi8330_dma_t *)priv;
@@ -413,61 +305,91 @@ static void cmi8330_poll(void *priv)
     }
 }
 
-/* ------- Global mixing callback ------- */
+/* Very small HRTF processor applied to interleaved int32 buffer */
+static void hrtf_process(hrtf_state_t *h, int32_t *buf, int len, int samplerate)
+{
+    if (!h->enabled) return;
+
+    for (int i = 0; i < len; ++i) {
+        int32_t in_l = clamp_i(buf[i*2 + 0], -32768, 32767);
+        int32_t in_r = clamp_i(buf[i*2 + 1], -32768, 32767);
+        int32_t mono = (in_l + in_r) / 2;
+
+        /* circular delay write */
+        h->del_buf[h->del_buf_pos] = (int16_t)mono;
+        h->del_buf_pos = (h->del_buf_pos + 1) % h->del_buf_len;
+
+        int read_l = (h->del_buf_pos - 1 - h->delay_left + h->del_buf_len) % h->del_buf_len;
+        int read_r = (h->del_buf_pos - 1 - h->delay_right + h->del_buf_len) % h->del_buf_len;
+        int16_t d_l = h->del_buf[read_l];
+        int16_t d_r = h->del_buf[read_r];
+
+        float out_l = h->lp_b * (float)d_l + h->lp_a * h->lp_state_l;
+        float out_r = h->lp_b * (float)d_r + h->lp_a * h->lp_state_r;
+        h->lp_state_l = out_l;
+        h->lp_state_r = out_r;
+
+        float il = 0.9f, ir = 0.9f; /* simple ILD stub */
+        int32_t final_l = clamp_i((int)roundf(out_l * h->gain * il), -32768, 32767);
+        int32_t final_r = clamp_i((int)roundf(out_r * h->gain * ir), -32768, 32767);
+
+        if (h->reverb_enabled) {
+            int rp = (h->reverb_pos++) % (int)(sizeof(h->reverb_buf)/sizeof(h->reverb_buf[0]));
+            int32_t rv = h->reverb_buf[rp];
+            int32_t add = (int32_t)((final_l + final_r) / 4 * h->reverb_level);
+            h->reverb_buf[rp] = clamp_i(rv + add, -32768, 32767);
+            final_l = clamp_i(final_l + (h->reverb_buf[rp] >> 3), -32768, 32767);
+            final_r = clamp_i(final_r + (h->reverb_buf[rp] >> 3), -32768, 32767);
+        }
+
+        buf[i*2 + 0] = final_l;
+        buf[i*2 + 1] = final_r;
+    }
+}
+
+/* ---------- Mixing callback ---------- */
+
 static void cmi8330_get_buffer(int32_t *buffer, int len, void *priv)
 {
     cmi8330_t *dev = (cmi8330_t *)priv;
 
-    /* Ensure DMA-decoded buffers are up-to-date */
+    /* ensure FIFO decode up-to-date */
     for (int i = 0; i < CMI_DMA_CHANS; ++i)
         cmi8330_poll(&dev->dma[i]);
 
-    /* Mix wave channels to temporary buffer (interleaved stereo ints) */
-    /* Use local temp buffer sized to len*2 */
-    int32_t *tmp = alloca(len * 2 * sizeof(int32_t));
-    memset(tmp, 0, len * 2 * sizeof(int32_t));
+    /* temporary mixing buffer */
+    int32_t tmp[len * 2];
+    memset(tmp, 0, sizeof(tmp));
 
+    /* master mute bit at 0x24 bit6 (spec/implementation dependent) */
     if (!(dev->io_regs[0x24] & 0x40)) {
-        /* add both channel outputs */
-        for (int s = 0; s < len * 2; ++s) {
-            int32_t val = (int32_t)dev->dma[0].buffer[s] + (int32_t)dev->dma[1].buffer[s];
-            tmp[s] += val;
-        }
+        for (int s = 0; s < len * 2; ++s)
+            tmp[s] += (int32_t)dev->dma[0].buffer[s] + (int32_t)dev->dma[1].buffer[s];
     }
 
-    /* If HRTF enabled, run HRTF on tmp inplace */
-    if (dev->hrtf.enabled) {
-        /* convert int32->int32 buffer assumed in range +/- 32767 */
+    /* apply HRTF if enabled */
+    if (dev->hrtf.enabled)
         hrtf_process(&dev->hrtf, tmp, len, SOUND_FREQ);
-    }
 
-    /* SPDIF: if enabled and routed to output, add to global buffer at reduced level to simulate SPDIF feed */
-    if (dev->spdif_enabled && dev->spdif_out_route) {
-        for (int s = 0; s < len * 2; ++s)
-            buffer[s] += tmp[s]; /* SPDIF piggybacks on master out in this stub */
-    } else {
-        for (int s = 0; s < len * 2; ++s)
-            buffer[s] += tmp[s];
-    }
+    /* SPDIF stub: route to master output if enabled (simple mix) */
+    for (int s = 0; s < len * 2; ++s)
+        buffer[s] += tmp[s];
 
-    /* reset positions */
+    /* reset per-frame positions */
     dev->dma[0].pos = dev->dma[1].pos = 0;
 }
 
-/* ------- I/O handlers (full register window) ------- */
+/* ---------- I/O window handlers ---------- */
 
 static uint8_t cmi8330_io_read(uint16_t addr, void *priv)
 {
     cmi8330_t *dev = (cmi8330_t *)priv;
     uint16_t off = addr - dev->io_base;
-
     if (off < CMI_IOREGS)
         return dev->io_regs[off];
-
     return 0xff;
 }
 
-/* helper: recompute timer latches when sample rate changes */
 static void cmi8330_speed_changed(cmi8330_t *dev)
 {
     const double freqs[] = {5512.0, 11025.0, 22050.0, 44100.0, 8000.0, 16000.0, 32000.0, 48000.0};
@@ -477,11 +399,9 @@ static void cmi8330_speed_changed(cmi8330_t *dev)
         dev->dma[i].dma_latch = (double)(1e6 / freq);
         dev->dma[i].timer_latch = (uint64_t)((double) TIMER_USEC * (1000000.0 / freq));
     }
-    /* reconfigure HRTF LP filters as they depend on sample rate */
     hrtf_configure_lp(&dev->hrtf, 4000.0f, (int)freq);
 }
 
-/* write handler implements datasheet side-effects */
 static void cmi8330_io_write(uint16_t addr, uint8_t val, void *priv)
 {
     cmi8330_t *dev = (cmi8330_t *)priv;
@@ -489,7 +409,7 @@ static void cmi8330_io_write(uint16_t addr, uint8_t val, void *priv)
     if (off >= CMI_IOREGS) return;
 
     switch (off) {
-        case 0x00: /* control */
+        case 0x00: /* control: direction & start/stop */
             dev->io_regs[off] = val;
             for (int i = 0; i < CMI_DMA_CHANS; ++i) {
                 if (val & (1 << i)) {
@@ -517,7 +437,7 @@ static void cmi8330_io_write(uint16_t addr, uint8_t val, void *priv)
             }
             break;
 
-        case 0x05: /* sample rate */
+        case 0x05: /* sample rate / clock */
             dev->io_regs[off] = val;
             cmi8330_speed_changed(dev);
             break;
@@ -526,8 +446,7 @@ static void cmi8330_io_write(uint16_t addr, uint8_t val, void *priv)
             dev->io_regs[off] = val;
             break;
 
-        /* Enhanced mixer region (0x10 .. 0x1A) per datasheet */
-        case 0x10:
+        case 0x10: /* enhanced mixer region (record routing / flags) */
         case 0x11:
         case 0x12:
         case 0x13:
@@ -539,52 +458,47 @@ static void cmi8330_io_write(uint16_t addr, uint8_t val, void *priv)
         case 0x19:
         case 0x1a:
             dev->io_regs[off] = val;
-            /* apply relevant side-effects: master volume changes, mute flags -> affect mixer,
-               but actual mixing is handled in sb_ct1745_mixer_*; here we store values for driver reads. */
             break;
 
-        /* HRTF control registers (we pick mapped offsets inside 0x20..0x2F per implementation) */
-        case 0x20: /* HRTF enable (bit0), reverb enable (bit1) */
+        case 0x20: /* HRTF control (example mapping) */
             dev->io_regs[off] = val;
             dev->hrtf.enabled = (val & 0x01) ? 1 : 0;
             dev->hrtf.reverb_enabled = (val & 0x02) ? 1 : 0;
             break;
 
-        case 0x21: /* HRTF azimuth coarse (0..255 => 0..359deg) */
+        case 0x21: /* HRTF azimuth */
             dev->io_regs[off] = val;
             dev->hrtf.azimuth = (int)((val * 360) / 256);
-            hrtf_compute_delays_and_gains(&dev->hrtf, dev->hrtf.azimuth, dev->hrtf.distance, SOUND_FREQ);
+            hrtf_compute_basic(&dev->hrtf, dev->hrtf.azimuth, dev->hrtf.distance, SOUND_FREQ);
             break;
 
-        case 0x22: /* HRTF elevation (signed) */
+        case 0x22: /* HRTF elevation */
             dev->io_regs[off] = val;
-            dev->hrtf.elevation = (int)((int8_t)val); /* map 8-bit signed range */
+            dev->hrtf.elevation = (int)((int8_t)val);
             break;
 
-        case 0x23: /* HRTF distance (0..255 => 0.1m..20m) */
+        case 0x23: /* HRTF distance */
             dev->io_regs[off] = val;
             dev->hrtf.distance = 0.1f + ((float)val / 255.0f) * 19.9f;
-            hrtf_compute_delays_and_gains(&dev->hrtf, dev->hrtf.azimuth, dev->hrtf.distance, SOUND_FREQ);
+            hrtf_compute_basic(&dev->hrtf, dev->hrtf.azimuth, dev->hrtf.distance, SOUND_FREQ);
             break;
 
-        case 0x24: /* master control: bit6 wave mute etc (kept compatibility) */
+        case 0x24: /* master control (mute bits etc) */
             dev->io_regs[off] = val;
             break;
 
-        case 0x0e: /* interrupt control / clear */
+        case 0x0e: /* interrupt control/clear */
             dev->io_regs[off] = val & 0x07;
             if (!(val & 0x04)) {
-                dev->io_regs[0x10] &= ~0xFF;
-                dev->io_regs[0x11] &= ~0xFF;
+                dev->io_regs[0x10] = 0;
+                dev->io_regs[0x11] = 0;
             }
-            cmi8330_update_irqs(dev);
             break;
 
-        /* SPDIF controls (example offsets 0x30..0x31) */
-        case 0x30: /* SPDIF enable/route */
+        case 0x30: /* SPDIF control */
             dev->io_regs[off] = val;
             dev->spdif_enabled = (val & 0x01) ? 1 : 0;
-            dev->spdif_out_route = (val >> 1) & 0x03;
+            dev->spdif_route = (val >> 1) & 0x03;
             break;
 
         default:
@@ -593,7 +507,7 @@ static void cmi8330_io_write(uint16_t addr, uint8_t val, void *priv)
     }
 }
 
-/* ------- Device lifecycle (init/free/reset) ------- */
+/* ---------- Lifecycle ---------- */
 
 static void *cmi8330_init(const device_t *info)
 {
@@ -602,14 +516,13 @@ static void *cmi8330_init(const device_t *info)
 
     dev->io_base = device_get_config_hex16("base");
     if (!dev->io_base) dev->io_base = 0x220;
-
     dev->mpu_base = device_get_config_hex16("base401");
     dev->irq = device_get_config_int("irq");
     if (!dev->irq) dev->irq = 5;
     dev->dma = device_get_config_int("dma");
     if (!dev->dma) dev->dma = 1;
 
-    /* create SB core instance */
+    /* Create Sound Blaster core instance (same pattern used in other drivers) */
     dev->sb = device_add_inst(device_get_config_int("receive_input") ? &sb_16_compat_device : &sb_16_compat_nompu_device, 1);
     if (!dev->sb) {
         free(dev);
@@ -627,7 +540,7 @@ static void *cmi8330_init(const device_t *info)
         gameport_remap(dev->gameport, dev->sb->gameport_addr);
     }
 
-    /* Setup DMA channels */
+    /* Setup DMA channels and timers */
     for (int i = 0; i < CMI_DMA_CHANS; ++i) {
         cmi8330_dma_t *dma = &dev->dma[i];
         dma->id = i;
@@ -641,15 +554,15 @@ static void *cmi8330_init(const device_t *info)
         timer_add(&dma->poll_timer, cmi8330_poll, dma, 0);
     }
 
-    /* initialize registers */
+    /* clear registers and set a few sensible defaults from datasheet */
     memset(dev->io_regs, 0, sizeof(dev->io_regs));
-    dev->io_regs[0x10] = 0x40; /* Ensbmix default per datasheet */
-    dev->io_regs[0x13] = 0xCC; /* master volumes default nibble pattern */
+    dev->io_regs[0x10] = 0x40; /* Ensbmix default bit per datasheet */
+    dev->io_regs[0x13] = 0xCC; /* master volume nibble defaults (if documented) */
 
-    /* default HRTF state */
+    /* init HRTF */
     hrtf_init(&dev->hrtf, SOUND_FREQ);
 
-    /* install IO handlers */
+    /* install IO handlers for 256-byte window at base */
     io_sethandler(dev->io_base, CMI_IOREGS, cmi8330_io_read, NULL, NULL, cmi8330_io_write, NULL, NULL, dev);
 
     /* SB DSP wiring */
@@ -659,24 +572,25 @@ static void *cmi8330_init(const device_t *info)
     sb_dsp_setdma16(&dev->sb->dsp, dev->dma);
     sb_dsp_setdma16_8(&dev->sb->dsp, dev->dma);
 
-    /* attach DMA wrappers */
-    sb_dsp_dma_attach(&dev->sb->dsp, cmi8330_sb_dma_readb, cmi8330_sb_dma_writeb, cmi8330_sb_dma_readw, cmi8330_sb_dma_writew, dev);
+    /* attach DMA callbacks (must match signatures in snd_sb_dsp.c) */
+    sb_dsp_dma_attach(&dev->sb->dsp,
+                      cmi8330_sb_dma_readb, cmi8330_sb_dma_readw,
+                      cmi8330_sb_dma_writeb, cmi8330_sb_dma_writew,
+                      dev);
 
-    /* register audio providers */
+    /* register audio producer */
     sound_add_handler(cmi8330_get_buffer, dev);
 
-    /* reset sb dsp state */
+    /* reset SB DSP internal state */
     sb_dsp_reset(&dev->sb->dsp);
 
     return dev;
 }
 
-static void cmi8330_free(void *p)
+static void cmi8330_close(void *p)
 {
     cmi8330_t *dev = (cmi8330_t *)p;
     if (!dev) return;
-
-    sound_remove_handler(cmi8330_get_buffer, dev);
 
     for (int i = 0; i < CMI_DMA_CHANS; ++i) {
         timer_disable(&dev->dma[i].dma_timer);
@@ -685,19 +599,17 @@ static void cmi8330_free(void *p)
 
     io_removehandler(dev->io_base, CMI_IOREGS, cmi8330_io_read, NULL, NULL, cmi8330_io_write, NULL, NULL, dev);
 
+    /* detach SB DSP wiring */
     sb_dsp_setaddr(&dev->sb->dsp, 0);
     sb_dsp_setirq(&dev->sb->dsp, 0);
     sb_dsp_setdma8(&dev->sb->dsp, 0);
     sb_dsp_setdma16(&dev->sb->dsp, 0);
     sb_dsp_setdma16_8(&dev->sb->dsp, 0);
 
-    if (dev->gameport)
-        gameport_free(dev->gameport);
-
+    /* gameport cleanup is handled elsewhere in the core; free our container */
     free(dev);
 }
 
-/* optional reset callback */
 static void cmi8330_reset(void *p)
 {
     cmi8330_t *dev = (cmi8330_t *)p;
