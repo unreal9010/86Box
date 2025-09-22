@@ -704,12 +704,30 @@ static void cmi8330_reset(void *p)
     sb_dsp_reset(&dev->sb->dsp);
 }
 
-/* Device descriptor */
-static const device_t cmi8330_device = {
-    .name = "cmi8330",
-    .init = cmi8330_init,
-    .free = cmi8330_free,
-    .reset = cmi8330_reset
+const device_t cmi8330_device = {
+    .name          = "C-Media CMI8330",
+    .internal_name = "cmi8330",
+    .flags         = DEVICE_ISA,
+    .local         = 2,               
+    .init          = cmi8330_init,    
+    .close         = cmi8330_free,    
+    .reset         = NULL,            
+    .available     = cmi8330_available,   
+    .speed_changed = NULL,            
+    .force_redraw  = NULL,
+    .config        = cmi8330_config   
 };
 
-const device_t *cmi8330_device_ptr = &cmi8330_device;
+const device_t cmi8330_device = {
+    .name          = "C-Media CMI8330 (onboard)",
+    .internal_name = "cmi8330_onboard",
+    .flags         = DEVICE_ISA,
+    .local         = 2,               
+    .init          = cmi8330_init,    
+    .close         = cmi8330_free,    
+    .reset         = NULL,            
+    .available     = cmi8330_available,   
+    .speed_changed = NULL,            
+    .force_redraw  = NULL,
+    .config        = cmi8330_config   
+};
