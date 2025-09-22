@@ -23,7 +23,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 #define HAVE_STDARG_H
 
 #include <86box/86box.h>
@@ -34,11 +33,13 @@
 #include <86box/timer.h>
 #include <86box/dma.h>
 #include <86box/sound.h>
-#include <86box/snd_sb.h>
-#include <86box/snd_sb_dsp.h>
-#include <86box/mpu401.h>
-#include <86box/gameport.h>
-#include <86box/opl.h>
+
+#include <86box/snd_sb.h>       
+#include <86box/snd_sb_dsp.h>   
+#include <86box/snd_opl.h>       
+#include <86box/midi.h>          
+#include <86box/gameport.h>      
+#include <86box/isapnp.h>        
 #include <86box/plat_fallthrough.h>
 #include <86box/plat_unused.h>
 
