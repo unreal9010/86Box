@@ -239,7 +239,6 @@ device_set_context(device_context_t *ctx, const device_t *dev, int inst)
         { .old = "Cirrus Logic GD5401 (ISA) (ACUMOS AVGA1) (On-Board)", .new = "Cirrus Logic GD5401 (ISA) (On-Board)" },
         { .old = "Cirrus Logic GD5402 (ISA) (ACUMOS AVGA2)", .new = "Cirrus Logic GD5402 (ISA)" },
         { .old = "Cirrus Logic GD5402 (ISA) (ACUMOS AVGA2) (On-Board)", .new = "Cirrus Logic GD5402 (ISA) (On-Board)" },
-        { .old = "Cirrus Logic GD5402 (ISA) (ACUMOS AVGA2) (On-Board) (Commodore)", .new = "Cirrus Logic GD5402 (ISA) (On-Board) (Commodore)" },
         { .old = "Cirrus Logic GD5428 (MCA) (IBM SVGA Adapter/A)", .new = "Cirrus Logic GD5428 (MCA)" },
         { .old = "Cirrus Logic GD5426 (MCA) (Reply Video Adapter)", .new = "Cirrus Logic GD5426 (MCA)" },
         { .old = "3dfx Voodoo3 2000 (On-Board 8MB SGRAM)", .new = "3dfx Voodoo3 2000 (On-Board)" },
@@ -886,7 +885,7 @@ device_get_name(const device_t *dev, int bus, char *name)
                 strcat(name, tname + strlen(sbus) + 1);
             /* Special case to not strip the "oPCI" from "Ensoniq AudioPCI",
                the "-ISA" from "AMD PCnet-ISA" or the " PCI" from "CMD PCI-064x". */
-            else if ((fbus < &tname[2]) || (*(fbus - 1) == 'o') || (*(fbus - 1) == '-') || (*(fbus - 2) == 'r') || ((fbus[0] == 'P') && (fbus[1] == 'C') && (fbus[2] == 'I') && (fbus[3] == '-')) || is_dac)
+            else if ((fbus < &tname[2]) || (*(fbus - 1) == 'o') || (*(fbus - 1) == '-') || (*(fbus - 2) == 'r') || ((fbus[0] == 'P') && (fbus[1] == 'C') && (fbus[2] == 'I') && (fbus[3] == '-')) )
                 strcat(name, tname);
             else {
                 strncat(name, tname, fbus - tname - 1);
@@ -971,10 +970,16 @@ device_get_config_bios(const char *str)
                                  (char *) str, (char *) cfg->default_string));
                 if ((s != NULL) && (strlen(s) == 1)) {
                     switch (s[0]) {
-                        default:
-                            ret = "";
-                            fatal("Invalid config integer: %i\n", s[0]);
+                        default: {
+                            /* Unknown legacy numeric index (single char). Log and fall back. */
+                            const char *def = (cfg->default_string) ? cfg->default_string : "";
+                            warning("Invalid config integer for device %s.%s: '%c' (%i). Falling back to '%s'\n",
+                                    device_current.name, cfg->name,
+                                    (s[0] >= 32 && s[0] < 127) ? s[0] : '?', (int) s[0], def);
+                            ret = def;
+                            config_set_string(device_current.name, str, ret);
                             break;
+                        }
                         case '0':
                             ret = "voodoo";
                             config_set_string(device_current.name, str, ret);
@@ -1009,9 +1014,14 @@ device_migrate_config_bios(const void *priv, const char *name)
 
     if ((s != NULL) && (strlen(s) == 1)) {
         switch (s[0]) {
-            default:
-                fatal("Invalid config integer: %i\n", s[0]);
+            default: {
+                const char *def = (cfg->default_string) ? cfg->default_string : "";
+                warning("Invalid config integer during migration for %s.%s: '%c' (%i). Setting to default '%s'\n",
+                        name, cfg->name,
+                        (s[0] >= 32 && s[0] < 127) ? s[0] : '?', (int) s[0], def);
+                config_set_string(name, cfg->name, def);
                 break;
+            }
             case '0':
                 config_set_string(name, cfg->name, "voodoo");
                 break;
