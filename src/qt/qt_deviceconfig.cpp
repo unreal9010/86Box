@@ -127,6 +127,8 @@ QComboBox *cbox_memory   = nullptr;
 QComboBox *cbox_memory_2 = nullptr;
 
 QComboBox *cbox_bios     = nullptr;
+QComboBox *cbox_type     = nullptr;
+QComboBox *cbox_board    = nullptr;
 
 const _device_config_ *cfg_memory    = nullptr;
 const _device_config_ *cfg_memory_2  = nullptr;
@@ -134,6 +136,119 @@ const _device_config_ *cfg_memory_2  = nullptr;
 const _device_config_ *cfg_bios      = nullptr;
 
 int bios_rows = 0;
+
+static constexpr int VOODOO_UI_1   = 0;
+static constexpr int VOODOO_UI_2   = 2;
+
+static bool
+is_voodoo_device_config()
+{
+    return (cfg_dev != nullptr) &&
+           (cfg_dev->internal_name != nullptr) &&
+           !strcmp(cfg_dev->internal_name, "voodoo");
+}
+
+static int
+voodoo_ui_type()
+{
+    if (!cbox_type || !cfg_bios || cbox_type->currentIndex() < 0)
+        return VOODOO_UI_1;
+
+    const int idx = cbox_type->currentData().toInt();
+    if (idx < 0)
+        return VOODOO_UI_1;
+
+    return cfg_bios->bios[idx].local;
+}
+
+static void
+voodoo_filter_board_for_type()
+{
+    if (!is_voodoo_device_config() || !cbox_type || !cbox_board)
+        return;
+
+    const int type = voodoo_ui_type();
+    int       board = cbox_board->currentData().toInt();
+
+    auto *model = cbox_board->model();
+    const bool board_valid =
+        (board == 0) ||
+        (type == VOODOO_UI_1 && board == 4) ||
+        (type == VOODOO_UI_2 && board == 8);
+
+    if (!board_valid)
+        board = 0;
+
+    cbox_board->blockSignals(true);
+    cbox_board->clear();
+
+    Models::AddEntry(model, tr("3Dfx reference board"), 0);
+
+    if (type == VOODOO_UI_1)
+        Models::AddEntry(model, tr("Diamond Monster 3D"), 4);
+    else if (type == VOODOO_UI_2)
+        Models::AddEntry(model, tr("Diamond Monster 3D II"), 8);
+
+    int currentIndex = cbox_board->findData(board);
+    if (currentIndex < 0)
+        currentIndex = 0;
+
+    cbox_board->setCurrentIndex(currentIndex);
+    cbox_board->blockSignals(false);
+}
+
+static void
+voodoo_filter_type_for_board()
+{
+    if (!is_voodoo_device_config() || !cbox_type || !cbox_board || !cfg_bios)
+        return;
+
+    const int board = cbox_board->currentData().toInt();
+    int       type  = voodoo_ui_type();
+
+    if (board == 4)
+        type = VOODOO_UI_1;
+    else if (board == 8)
+        type = VOODOO_UI_2;
+
+    auto *model = cbox_type->model();
+    cbox_type->blockSignals(true);
+    cbox_type->clear();
+
+    int currentIndex = -1;
+    for (int i = 0; cfg_bios->bios[i].name != nullptr &&
+                    cfg_bios->bios[i].internal_name != nullptr &&
+                    cfg_bios->bios[i].files_no != 0; ++i) {
+        const int biosType = cfg_bios->bios[i].local;
+        const bool allowed =
+            (board == 0) ||
+            (board == 4 && biosType == VOODOO_UI_1) ||
+            (board == 8 && biosType == VOODOO_UI_2);
+
+        if (!allowed)
+            continue;
+
+        const int row = Models::AddEntry(model, tr(cfg_bios->bios[i].name), i);
+        if (biosType == type)
+            currentIndex = row;
+    }
+
+    if (currentIndex < 0)
+        currentIndex = 0;
+
+    cbox_type->setCurrentIndex(currentIndex);
+    cbox_type->blockSignals(false);
+}
+
+static void
+voodoo_update_ui_from_type()
+{
+    if (!is_voodoo_device_config() || !cbox_type || !cbox_board)
+        return;
+
+    voodoo_filter_board_for_type();
+    voodoo_filter_type_for_board();
+}
 
 void
 DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
@@ -262,7 +377,7 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
                     cbox->setCurrentIndex(currentIndex);
                     if (rows < 2)
                         cbox->setEnabled(false);
-                    if (!strcmp(config->name, "memory") || !strcmp(config->name, "framebuffer_memory")) {
+                    if (!strcmp(config->name, "memory") || !strcmp(config->name, "memory_size") || !strcmp(config->name, "framebuffer_memory")) {
                         cbox_memory   = cbox;
                         cfg_memory    = config;
                     }    
@@ -270,6 +385,8 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
                         cbox_memory_2 = cbox;
                         cfg_memory_2  = config;
                     }
+                    if (is_voodoo_device_config() && !strcmp(config->name, "board_id"))
+                        cbox_board = cbox;
                     break;
                 }
             case CONFIG_BIOS:
@@ -318,6 +435,8 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
 
                     cbox_bios = cbox;
                     cfg_bios  = config;
+                    if (is_voodoo_device_config() && !strcmp(config->name, "type"))
+                        cbox_type = cbox;
                     break;
                 }
             case CONFIG_SPINNER:
@@ -444,7 +563,22 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
     if ((cfg_memory != nullptr) && (cfg_bios != nullptr) && (bios != -1))
         connect(cbox_bios, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DeviceConfig::on_comboIndexChanged);
 
-    on_comboIndexChanged(bios);
+    if (is_voodoo_device_config() && cbox_type != nullptr && cbox_board != nullptr) {
+        connect(cbox_type, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+            voodoo_filter_board_for_type();
+            voodoo_filter_type_for_board();
+            on_comboIndexChanged(index);
+        });
+
+        connect(cbox_board, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+            voodoo_filter_type_for_board();
+            on_comboIndexChanged(cbox_type->currentIndex());
+        });
+
+        voodoo_update_ui_from_type();
+    }
+
+    on_comboIndexChanged(cbox_type ? cbox_type->currentIndex() : bios);
 }
 
 int
@@ -460,6 +594,8 @@ DeviceConfig::ConfigureDevice(const _device_ *device, int instance, Settings *se
     cbox_memory_2 = nullptr;
 
     cbox_bios     = nullptr;
+    cbox_type     = nullptr;
+    cbox_board    = nullptr;
 
     cfg_memory    = nullptr;
     cfg_memory_2  = nullptr;
