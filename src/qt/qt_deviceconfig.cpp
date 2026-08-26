@@ -33,6 +33,7 @@
 #include <QSettings>
 #include <QStringBuilder>
 #include <QCollator>
+#include <QCoreApplication>
 
 extern "C" {
 #include <86box/86box.h>
@@ -182,12 +183,12 @@ voodoo_filter_board_for_type()
     cbox_board->blockSignals(true);
     cbox_board->clear();
 
-    Models::AddEntry(model, tr("3Dfx reference board"), 0);
+    Models::AddEntry(model, QCoreApplication::translate("DeviceConfig", "3Dfx reference board"), 0);
 
     if (type == VOODOO_UI_1)
-        Models::AddEntry(model, tr("Diamond Monster 3D"), 4);
+        Models::AddEntry(model, QCoreApplication::translate("DeviceConfig", "Diamond Monster 3D"), 4);
     else if (type == VOODOO_UI_2)
-        Models::AddEntry(model, tr("Diamond Monster 3D II"), 8);
+        Models::AddEntry(model, QCoreApplication::translate("DeviceConfig", "Diamond Monster 3D II"), 8);
 
     int currentIndex = cbox_board->findData(board);
     if (currentIndex < 0)
@@ -228,7 +229,7 @@ voodoo_filter_type_for_board()
         if (!allowed)
             continue;
 
-        const int row = Models::AddEntry(model, tr(cfg_bios->bios[i].name), i);
+        const int row = Models::AddEntry(model, QCoreApplication::translate("DeviceConfig", cfg_bios->bios[i].name), i);
         if (biosType == type)
             currentIndex = row;
     }
@@ -256,7 +257,7 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
     auto         *device_context = static_cast<device_context_t *>(dc);
     const auto   *config         = static_cast<const _device_config_ *>(c);
     const QString blank          = "";
-    const QString colon          = (Preferences::languageIdToCode(lang_id).startsWith("fr-") ? " :" : ":");
+    const QString colon          = (Preferences::languageIdToCode(lang_id).startsWith("fr-") ? " :" : ":");
     int           bios           = -1;
     int           p;
     int           q;
@@ -886,7 +887,7 @@ DeviceConfig::on_comboIndexChanged(int index)
         cbox_memory_2->setCurrentIndex(-1);
 
         for (auto *sel = cfg_memory_2->selection; (sel != nullptr) && (sel->description != nullptr) &&
-                                                (strlen(sel->description) > 0); ++sel) {
+                                                 (strlen(sel->description) > 0); ++sel) {
             if ((sel->value >= min_mem) && (sel->value <= max_mem)) {
                 int row = Models::AddEntry(model, tr(sel->description), sel->value);
 
