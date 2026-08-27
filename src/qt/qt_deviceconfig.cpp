@@ -33,7 +33,6 @@
 #include <QSettings>
 #include <QStringBuilder>
 #include <QCollator>
-#include <QCoreApplication>
 
 extern "C" {
 #include <86box/86box.h>
@@ -133,8 +132,9 @@ QComboBox *cbox_board    = nullptr;
 
 const _device_config_ *cfg_memory    = nullptr;
 const _device_config_ *cfg_memory_2  = nullptr;
-
 const _device_config_ *cfg_bios      = nullptr;
+const _device_config_ *cfg_type      = nullptr;
+const _device_config_ *cfg_board     = nullptr;
 
 int bios_rows = 0;
 
@@ -149,29 +149,88 @@ is_voodoo_device_config()
            !strcmp(cfg_dev->internal_name, "voodoo");
 }
 
+static bool
+voodoo_bios_index_valid(const _device_config_ *config, int index)
+{
+    if (!config || config->type != CONFIG_BIOS || !config->bios || index < 0)
+        return false;
+
+    for (int i = 0; config->bios[i].files_no != 0; ++i) {
+        if (i == index)
+            return config->bios[i].name != nullptr && config->bios[i].internal_name != nullptr;
+    }
+
+    return false;
+}
+
 static int
 voodoo_ui_type()
 {
-    if (!cbox_type || !cfg_bios || cbox_type->currentIndex() < 0)
+    if (!cbox_type || cbox_type->currentIndex() < 0)
         return VOODOO_UI_1;
 
-    const int idx = cbox_type->currentData().toInt();
-    if (idx < 0)
-        return VOODOO_UI_1;
+    if (cfg_type && cfg_type->type == CONFIG_SELECTION)
+        return cbox_type->currentData().toInt();
 
-    return cfg_bios->bios[idx].local;
+    if (cfg_type && cfg_type->type == CONFIG_BIOS && cfg_type->bios) {
+        const int idx = cbox_type->currentData().toInt();
+        if (voodoo_bios_index_valid(cfg_type, idx))
+            return cfg_type->bios[idx].local & 0x0f;
+    }
+
+    return VOODOO_UI_1;
+}
+
+static int
+voodoo_ui_board()
+{
+    if (!cbox_board || cbox_board->currentIndex() < 0)
+        return 0;
+
+    if (cfg_board && cfg_board->type == CONFIG_SELECTION)
+        return cbox_board->currentData().toInt();
+
+    if (cfg_board && cfg_board->type == CONFIG_BIOS && cfg_board->bios) {
+        const int idx = cbox_board->currentData().toInt();
+        if (voodoo_bios_index_valid(cfg_board, idx)) {
+            const int local = cfg_board->bios[idx].local;
+            if (local == 4 || local == 8)
+                return local;
+            return (local >> 8) & 0x0f;
+        }
+    }
+
+    return 0;
+}
+
+static int
+voodoo_board_bios_index(int board)
+{
+    if (!cfg_board || cfg_board->type != CONFIG_BIOS || !cfg_board->bios)
+        return -1;
+
+    for (int i = 0; cfg_board->bios[i].files_no != 0; ++i) {
+        if (cfg_board->bios[i].name == nullptr)
+            continue;
+
+        const int local = cfg_board->bios[i].local;
+        const int bios_board = (local == 4 || local == 8) ? local : ((local >> 8) & 0x0f);
+        if (bios_board == board)
+            return i;
+    }
+
+    return -1;
 }
 
 static void
 voodoo_filter_board_for_type()
 {
-    if (!is_voodoo_device_config() || !cbox_type || !cbox_board)
+    if (!is_voodoo_device_config() || !cbox_type || !cbox_board || !cfg_board)
         return;
 
-    const int type = voodoo_ui_type();
-    int       board = cbox_board->currentData().toInt();
+    const int type  = voodoo_ui_type();
+    int       board = voodoo_ui_board();
 
-    auto *model = cbox_board->model();
     const bool board_valid =
         (board == 0) ||
         (type == VOODOO_UI_1 && board == 4) ||
@@ -183,14 +242,46 @@ voodoo_filter_board_for_type()
     cbox_board->blockSignals(true);
     cbox_board->clear();
 
-    Models::AddEntry(model, QCoreApplication::translate("DeviceConfig", "3Dfx reference board"), 0);
+    if (cfg_board->type == CONFIG_SELECTION) {
+        Models::AddEntry(cbox_board->model(),
+                         QCoreApplication::translate("DeviceConfig", "3Dfx reference board"), 0);
 
-    if (type == VOODOO_UI_1)
-        Models::AddEntry(model, QCoreApplication::translate("DeviceConfig", "Diamond Monster 3D"), 4);
-    else if (type == VOODOO_UI_2)
-        Models::AddEntry(model, QCoreApplication::translate("DeviceConfig", "Diamond Monster 3D II"), 8);
+        if (type == VOODOO_UI_1)
+            Models::AddEntry(cbox_board->model(),
+                             QCoreApplication::translate("DeviceConfig", "Diamond Monster 3D"), 4);
+        else if (type == VOODOO_UI_2)
+            Models::AddEntry(cbox_board->model(),
+                             QCoreApplication::translate("DeviceConfig", "Diamond Monster 3D II"), 8);
+    } else if (cfg_board->type == CONFIG_BIOS && cfg_board->bios) {
+        for (int i = 0; cfg_board->bios[i].files_no != 0; ++i) {
+            const auto *bios = &cfg_board->bios[i];
+            if (bios->name == nullptr || bios->internal_name == nullptr)
+                continue;
 
-    int currentIndex = cbox_board->findData(board);
+            const int local = bios->local;
+            const int bios_board = (local == 4 || local == 8) ? local : ((local >> 8) & 0x0f);
+            const bool allowed =
+                (bios_board == 0) ||
+                (type == VOODOO_UI_1 && bios_board == 4) ||
+                (type == VOODOO_UI_2 && bios_board == 8);
+
+            if (!allowed)
+                continue;
+
+            Models::AddEntry(cbox_board->model(),
+                             QCoreApplication::translate("DeviceConfig", bios->name), i);
+        }
+    }
+
+    int currentIndex = -1;
+    if (cfg_board->type == CONFIG_SELECTION) {
+        currentIndex = cbox_board->findData(board);
+    } else {
+        const int idx = voodoo_board_bios_index(board);
+        if (idx >= 0)
+            currentIndex = cbox_board->findData(idx);
+    }
+
     if (currentIndex < 0)
         currentIndex = 0;
 
@@ -201,10 +292,10 @@ voodoo_filter_board_for_type()
 static void
 voodoo_filter_type_for_board()
 {
-    if (!is_voodoo_device_config() || !cbox_type || !cbox_board || !cfg_bios)
+    if (!is_voodoo_device_config() || !cbox_type || !cbox_board || !cfg_type)
         return;
 
-    const int board = cbox_board->currentData().toInt();
+    const int board = voodoo_ui_board();
     int       type  = voodoo_ui_type();
 
     if (board == 4)
@@ -212,26 +303,49 @@ voodoo_filter_type_for_board()
     else if (board == 8)
         type = VOODOO_UI_2;
 
-    auto *model = cbox_type->model();
     cbox_type->blockSignals(true);
     cbox_type->clear();
 
     int currentIndex = -1;
-    for (int i = 0; cfg_bios->bios[i].name != nullptr &&
-                    cfg_bios->bios[i].internal_name != nullptr &&
-                    cfg_bios->bios[i].files_no != 0; ++i) {
-        const int biosType = cfg_bios->bios[i].local;
-        const bool allowed =
-            (board == 0) ||
-            (board == 4 && biosType == VOODOO_UI_1) ||
-            (board == 8 && biosType == VOODOO_UI_2);
 
-        if (!allowed)
-            continue;
+    if (cfg_type->type == CONFIG_SELECTION) {
+        for (auto *sel = cfg_type->selection;
+             (sel != nullptr) && (sel->description != nullptr) &&
+             (strlen(sel->description) > 0); ++sel) {
+            const int biosType = sel->value;
+            const bool allowed =
+                (board == 0) ||
+                (board == 4 && biosType == VOODOO_UI_1) ||
+                (board == 8 && biosType == VOODOO_UI_2);
 
-        const int row = Models::AddEntry(model, QCoreApplication::translate("DeviceConfig", cfg_bios->bios[i].name), i);
-        if (biosType == type)
-            currentIndex = row;
+            if (!allowed)
+                continue;
+
+            const int row = Models::AddEntry(cbox_type->model(),
+                                             tr(sel->description), sel->value);
+            if (biosType == type)
+                currentIndex = row;
+        }
+    } else if (cfg_type->type == CONFIG_BIOS && cfg_type->bios) {
+        for (int i = 0; cfg_type->bios[i].files_no != 0; ++i) {
+            const auto *bios = &cfg_type->bios[i];
+            if (bios->name == nullptr || bios->internal_name == nullptr)
+                continue;
+
+            const int biosType = bios->local & 0x0f;
+            const bool allowed =
+                (board == 0) ||
+                (board == 4 && biosType == VOODOO_UI_1) ||
+                (board == 8 && biosType == VOODOO_UI_2);
+
+            if (!allowed)
+                continue;
+
+            const int row = Models::AddEntry(cbox_type->model(),
+                                             QCoreApplication::translate("DeviceConfig", bios->name), i);
+            if (biosType == type)
+                currentIndex = row;
+        }
     }
 
     if (currentIndex < 0)
@@ -257,7 +371,7 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
     auto         *device_context = static_cast<device_context_t *>(dc);
     const auto   *config         = static_cast<const _device_config_ *>(c);
     const QString blank          = "";
-    const QString colon          = (Preferences::languageIdToCode(lang_id).startsWith("fr-") ? " :" : ":");
+    const QString colon          = (Preferences::languageIdToCode(lang_id).startsWith("fr-") ? " :" : ":");
     int           bios           = -1;
     int           p;
     int           q;
@@ -386,8 +500,14 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
                         cbox_memory_2 = cbox;
                         cfg_memory_2  = config;
                     }
-                    if (is_voodoo_device_config() && !strcmp(config->name, "board_id"))
+                    if (is_voodoo_device_config() && !strcmp(config->name, "board_id")) {
                         cbox_board = cbox;
+                        cfg_board  = config;
+                    }
+                    if (is_voodoo_device_config() && !strcmp(config->name, "type")) {
+                        cbox_type = cbox;
+                        cfg_type  = config;
+                    }
                     break;
                 }
             case CONFIG_BIOS:
@@ -400,7 +520,32 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
                     int   rows         = 0;
 
                     if ((selected != nullptr) && (selected.length() == 1)) {
-                        device_migrate_config_bios((const void *) config, device_context->name);
+                        /*
+                         * Only the Voodoo "type" BIOS uses the generic
+                         * 0/1/2 migration.  Applying it to board_id is
+                         * incorrect: board IDs are 0/4/8.  In particular,
+                         * passing '8' to device_migrate_config_bios() causes
+                         * the historical "Invalid config integer: 56"
+                         * failure because 56 is ASCII '8'.
+                         */
+                        if (is_voodoo_device_config() && !strcmp(config->name, "type")) {
+                            device_migrate_config_bios((const void *) config, device_context->name);
+                        } else if (is_voodoo_device_config() && !strcmp(config->name, "board_id")) {
+                            const char legacy = selected.at(0).toLatin1();
+                            const char *board_name = nullptr;
+
+                            if (legacy == '0')
+                                board_name = "3dfx_reference";
+                            else if (legacy == '4')
+                                board_name = "diamond_monster_3d";
+                            else if (legacy == '8')
+                                board_name = "diamond_monster_3d_ii";
+
+                            if (board_name != nullptr)
+                                config_set_string(device_context->name,
+                                                  const_cast<char *>(config->name), board_name);
+                        }
+
                         selected = config_get_string(device_context->name, const_cast<char *>(config->name),
                                                      const_cast<char *>(config->default_string));
                     }
@@ -436,8 +581,14 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
 
                     cbox_bios = cbox;
                     cfg_bios  = config;
-                    if (is_voodoo_device_config() && !strcmp(config->name, "type"))
+                    if (is_voodoo_device_config() && !strcmp(config->name, "type")) {
                         cbox_type = cbox;
+                        cfg_type  = config;
+                    }
+                    if (is_voodoo_device_config() && !strcmp(config->name, "board_id")) {
+                        cbox_board = cbox;
+                        cfg_board  = config;
+                    }
                     break;
                 }
             case CONFIG_SPINNER:
@@ -561,25 +712,25 @@ DeviceConfig::ProcessConfig(void *dc, const void *c, const bool is_dep)
         ++config;
     }
 
-    if ((cfg_memory != nullptr) && (cfg_bios != nullptr) && (bios != -1))
+    if ((cfg_memory != nullptr) && (cfg_bios != nullptr) && (cbox_bios != nullptr) && (bios != -1))
         connect(cbox_bios, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DeviceConfig::on_comboIndexChanged);
 
     if (is_voodoo_device_config() && cbox_type != nullptr && cbox_board != nullptr) {
-        connect(cbox_type, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        connect(cbox_type, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
             voodoo_filter_board_for_type();
             voodoo_filter_type_for_board();
-            on_comboIndexChanged(index);
+            on_comboIndexChanged(cbox_bios ? cbox_bios->currentIndex() : -1);
         });
 
         connect(cbox_board, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
             voodoo_filter_type_for_board();
-            on_comboIndexChanged(cbox_type->currentIndex());
+            on_comboIndexChanged(cbox_bios ? cbox_bios->currentIndex() : -1);
         });
 
         voodoo_update_ui_from_type();
     }
 
-    on_comboIndexChanged(cbox_type ? cbox_type->currentIndex() : bios);
+    on_comboIndexChanged(cbox_bios ? cbox_bios->currentIndex() : bios);
 }
 
 int
@@ -602,6 +753,8 @@ DeviceConfig::ConfigureDevice(const _device_ *device, int instance, Settings *se
     cfg_memory_2  = nullptr;
 
     cfg_bios      = nullptr;
+    cfg_type      = nullptr;
+    cfg_board     = nullptr;
 
     bios_rows     = 0;
 
@@ -814,97 +967,97 @@ DeviceConfig::DeviceName(const _device_ *device, const char *internalName, const
 void
 DeviceConfig::on_comboIndexChanged(int index)
 {
+    Q_UNUSED(index);
+
     if ((cbox_memory != nullptr) && (cbox_bios != nullptr) &&
-        (cfg_memory != nullptr)  && (cfg_bios != nullptr)) {
-        int      idx        = index; /* cbox_bios->currentData().toInt(); */
-        int      mem        = cbox_memory->currentData().toInt();
-        char *   bios_name  = const_cast<char *>(cfg_bios->bios[idx].internal_name);
-        uint64_t bios_flags = device_get_bios_flags(cfg_dev, bios_name);
-        uint16_t min_mem    = 0;
-        uint16_t max_mem    = 65535;
-        int      rows       = 0;
+        (cfg_memory != nullptr)  && (cfg_bios != nullptr) &&
+        (cfg_bios->type == CONFIG_BIOS)) {
+        const int idx = cbox_bios->currentData().toInt();
+
+        if (!voodoo_bios_index_valid(cfg_bios, idx))
+            return;
+
+        int           mem        = cbox_memory->currentData().toInt();
+        const char   *bios_name  = cfg_bios->bios[idx].internal_name;
+        const uint64_t bios_flags = device_get_bios_flags(cfg_dev, const_cast<char *>(bios_name));
+        uint16_t       min_mem   = 0;
+        uint16_t       max_mem   = 65535;
+        int            rows      = 0;
 
         if (bios_flags & BIOS_LIMIT_MIN_MEMORY)
-            min_mem = (bios_flags & 0xff);
+            min_mem = (uint16_t) (bios_flags & 0xff);
 
         if (bios_flags & BIOS_LIMIT_MAX_MEMORY)
-            max_mem = ((bios_flags >> 8) & 0xff);
+            max_mem = (uint16_t) ((bios_flags >> 8) & 0xff);
 
-        mem = MAX(mem, min_mem);    /* No less than minimum memory. */
-        mem = MIN(mem, max_mem);    /* No more than maximum memory. */
+        mem = MAX(mem, min_mem);
+        mem = MIN(mem, max_mem);
 
-        auto *model        = cbox_memory->model();
-        int   removeRows   = model->rowCount();
-        int   currentIndex = -1;
+        auto *model = cbox_memory->model();
+        const int removeRows = model->rowCount();
+        int currentIndex = -1;
 
         cbox_memory->setCurrentIndex(-1);
 
-        for (auto *sel = cfg_memory->selection; (sel != nullptr) && (sel->description != nullptr) &&
-                                                (strlen(sel->description) > 0); ++sel) {
+        for (auto *sel = cfg_memory->selection;
+             (sel != nullptr) && (sel->description != nullptr) &&
+             (strlen(sel->description) > 0); ++sel) {
             if ((sel->value >= min_mem) && (sel->value <= max_mem)) {
-                int row = Models::AddEntry(model, tr(sel->description), sel->value);
-
+                const int row = Models::AddEntry(model, tr(sel->description), sel->value);
                 if (sel->value == mem)
                     currentIndex = row - removeRows;
-
                 rows++;
             }
         }
 
         model->removeRows(0, removeRows);
-
         cbox_memory->setCurrentIndex(currentIndex);
-
-        if (rows >= 2)
-            cbox_memory->setEnabled(true);
-        else
-            cbox_memory->setEnabled(false);
+        cbox_memory->setEnabled(rows >= 2);
     }
 
     if ((cbox_memory_2 != nullptr) && (cbox_bios != nullptr) &&
-        (cfg_memory_2 != nullptr)  && (cfg_bios != nullptr)) {
-        int      idx        = index; /* cbox_bios->currentData().toInt(); */
-        int      mem        = cbox_memory_2->currentData().toInt();
-        char *   bios_name  = const_cast<char *>(cfg_bios->bios[idx].internal_name);
-        uint64_t bios_flags = device_get_bios_flags(cfg_dev, bios_name);
-        uint16_t min_mem    = 0;
-        uint16_t max_mem    = 65535;
-        int      rows       = 0;
+        (cfg_memory_2 != nullptr) && (cfg_bios != nullptr) &&
+        (cfg_bios->type == CONFIG_BIOS)) {
+        const int idx = cbox_bios->currentData().toInt();
+
+        if (!voodoo_bios_index_valid(cfg_bios, idx))
+            return;
+
+        int           mem        = cbox_memory_2->currentData().toInt();
+        const char   *bios_name  = cfg_bios->bios[idx].internal_name;
+        const uint64_t bios_flags = device_get_bios_flags(cfg_dev, const_cast<char *>(bios_name));
+        uint16_t       min_mem   = 0;
+        uint16_t       max_mem   = 65535;
+        int            rows      = 0;
 
         if (bios_flags & BIOS_LIMIT_MIN_MEMORY_2)
-            min_mem = ((bios_flags >> 16) & 0xff);
+            min_mem = (uint16_t) ((bios_flags >> 16) & 0xff);
 
         if (bios_flags & BIOS_LIMIT_MAX_MEMORY_2)
-            max_mem = ((bios_flags >> 24) & 0xff);
+            max_mem = (uint16_t) ((bios_flags >> 24) & 0xff);
 
-        mem = MAX(mem, min_mem);    /* No less than minimum memory. */
-        mem = MIN(mem, max_mem);    /* No more than maximum memory. */
+        mem = MAX(mem, min_mem);
+        mem = MIN(mem, max_mem);
 
-        auto *model        = cbox_memory_2->model();
-        int   removeRows   = model->rowCount();
-        int   currentIndex = -1;
+        auto *model = cbox_memory_2->model();
+        const int removeRows = model->rowCount();
+        int currentIndex = -1;
 
         cbox_memory_2->setCurrentIndex(-1);
 
-        for (auto *sel = cfg_memory_2->selection; (sel != nullptr) && (sel->description != nullptr) &&
-                                                 (strlen(sel->description) > 0); ++sel) {
+        for (auto *sel = cfg_memory_2->selection;
+             (sel != nullptr) && (sel->description != nullptr) &&
+             (strlen(sel->description) > 0); ++sel) {
             if ((sel->value >= min_mem) && (sel->value <= max_mem)) {
-                int row = Models::AddEntry(model, tr(sel->description), sel->value);
-
+                const int row = Models::AddEntry(model, tr(sel->description), sel->value);
                 if (sel->value == mem)
                     currentIndex = row - removeRows;
-
                 rows++;
             }
         }
 
         model->removeRows(0, removeRows);
-
         cbox_memory_2->setCurrentIndex(currentIndex);
-
-        if (rows >= 2)
-            cbox_memory_2->setEnabled(true);
-        else
-            cbox_memory_2->setEnabled(false);
+        cbox_memory_2->setEnabled(rows >= 2);
     }
 }
